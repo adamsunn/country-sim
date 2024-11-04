@@ -31,8 +31,28 @@ def gen_oai(messages, model='gpt-4o', temperature=1):
       model=model,
       temperature=temperature,
       messages=messages,
-      max_tokens=1000)
+      max_tokens=1000
+    )
     content = response.choices[0].message.content
+    token_usage = response.usage
+    input_tokens = token_usage.prompt_tokens
+    output_tokens = token_usage.completion_tokens
+    
+    # Current pricing
+    input_cost_per_1k = 0.005  # Cost per 1k input tokens
+    output_cost_per_1k = 0.015  # Cost per 1k output tokens
+    
+    # Calculate costs
+    input_cost = (input_tokens / 1000) * input_cost_per_1k
+    output_cost = (output_tokens / 1000) * output_cost_per_1k
+    total_cost = input_cost + output_cost
+    
+    # Print detailed cost breakdown
+    print(f"API call cost breakdown:")
+    print(f" - Input tokens: {input_tokens} tokens ($ {input_cost:.4f})")
+    print(f" - Output tokens: {output_tokens} tokens ($ {output_cost:.4f})")
+    print(f" - Total cost: $ {total_cost:.4f}")
+
     return content
   except Exception as e:
     print(f"Error generating completion: {e}")
