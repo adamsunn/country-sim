@@ -2,8 +2,8 @@ import sys
 import os
 from pathlib import Path
 
-OPENAI_API_KEY = "xxxxxx"
-KEY_OWNER = "Adam Sun"
+OPENAI_API_KEY = None
+KEY_OWNER = "Name"
 DEBUG = True
 MAX_CHUNK_SIZE = 4
 LLM_VERS = "gpt-4o-mini"
