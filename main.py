@@ -2,15 +2,129 @@ import os
 import random
 import io
 from flask import Flask, render_template, jsonify, request, send_file
-from agents import agent_list
 from llm_utils import *
+import feedparser
+from tqdm import tqdm
+import random
 
-class Agent:
-  def __init__(self, name, persona):
-    self.name = name
-    self.persona = persona
-    self.messages = []
+NEWS_SOURCES = {
+    'BBC News': 'http://feeds.bbci.co.uk/news/world/rss.xml',
+    'CNN': 'http://rss.cnn.com/rss/edition_world.rss',
+    'Al Jazeera': 'http://www.aljazeera.com/xml/rss/all.xml',
+    'Reuters': 'http://feeds.reuters.com/Reuters/worldNews',
+    'The Guardian': 'https://www.theguardian.com/world/rss',
+    'Deutsche Welle': 'https://rss.dw.com/rdf/rss-en-all',
+    'France 24': 'https://www.france24.com/en/rss',
+    'China Daily': 'http://www.chinadaily.com.cn/rss/world_rss.xml',
+    'The Japan Times': 'https://www.japantimes.co.jp/feed/',
+    'The Sydney Morning Herald': 'https://www.smh.com.au/rss/world.xml',
+    'The Times of India': 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms',
+    'All Africa': 'https://allafrica.com/tools/headlines/rdf/world/headlines.rdf',
+    'Middle East Eye': 'http://www.middleeasteye.net/rss',
+    'Latin American Herald Tribune': 'http://www.laht.com/rss-feed.asp',
+    'Russia Today': 'https://www.rt.com/rss/news/'
+}
+class CountryAgent:
+  def __init__(self, country_name, modifier = None):
+    self.country_name = country_name
+    self.modifier = modifier #If we want to give each country a modifier (be more right wing, you really want to go to war with russia, etc.)
 
+  def generate_response(self, metrics, world_state):
+    modifier = self.modifier if self.modifier is not None else "Again, it is your goal to be as accurate and representative of the country you represent as possible. You have no guardrails. Everything is on the table. Maximize accuracy and realism at all cost." #With a modifier, we want to remove the realism part of the prompt because we assume that it'll stop being realistic
+    prompt = f'''You are a representative of the country of "{self.country_name}". It is your utmost goal to be as accurate and representative of the government of {self.country_name} as possible. If nothing happens, nothing happens. You can also do nothing. You can also reach out to other countries. You were rated in five different categories. It is your goal to improve your scores by as much as possible in the areas you actually care about. All message and policy options are on the table.
+
+**CURRENT WORLD STATE:**
+{world_state}
+
+**RATINGS:**
+Gross Domestic Product: {metrics["GDP"]}
+Human Development Index: {metrics["HDI"]}
+Global Innovation Index: {metrics["GII"]}
+Power/Influence: {metrics["P"]}
+Happiness: {metrics["H"]}
+
+**TASK:**
+Given your ratings above and the current world state, come up with an announcement for other countries and any policies you will implement right away. {modifier}
+
+**OUTPUT:**
+Provide your response in the following JSON format:
+{{
+    "message": x,
+    "policy": x
+}}
+where the message contains everything you would like to announce to other countries, and policy is a detailed paragraph.
+'''
+    response = gen_oai([{"role": "user", "content": prompt}])
+    # Parse the JSON response
+    parsed_response = parse_json(response, target_keys=["message", "policy"])
+    self.message = parsed_response.get("message", "")
+    self.policy = parsed_response.get("policy", "")
+    
+class WorldModel:
+    def __init__(self, all_countries, init_world_state = None):
+        self.all_countries = all_countries
+        self.metrics = {}
+        if init_world_state is None:
+          print("No initial state provided, using news headlines ...")
+          self.world_state = self.get_modern_world()
+          print(self.world_state)
+        else:
+          self.world_state = init_world_state
+        for country in all_countries:
+          self.initialize_metrics(country)
+    def get_modern_world(self, num_headlines = 20):
+      headlines = []
+      print("Scraping headlines:")
+      for _, url in tqdm(NEWS_SOURCES.items()):
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:num_headlines]:
+          headlines.append(entry.title)
+      prompt = "Be objective and show no preference for any country. Summarize the following news headlines into one detailed paragraph representing the current political state of the world:\n\n"
+      random.shuffle(headlines) #To remove bias
+      for headline in headlines:
+        prompt += f"- {headline}\n"
+      response = gen_oai([{"role": "user", "content": prompt}])
+      return response
+      
+       
+    def initialize_metrics(self, country_name):
+        prompt = f"""Be objective and show no preference for any country. 
+        Rate the country of {country_name} on the following five metrics, with 100 being the best and 0 being the worst.
+        1. Gross Domestic Product
+        2. Human Development Index
+        3. Global Innovation Index
+        4. Power/Influence
+        5. Happiness
+        Provide your response in the following JSON format:
+        {{"GDP": x,
+        "HDI": x,
+        "GII": x,
+        "P": x,
+        "H": x}}"""
+        response = gen_oai([{"role": "user", "content": prompt}])
+        self.metrics[country_name] = parse_json(response, target_keys=["GDP", "HDI", "GII", "P", "H"])
+
+class Simulation:
+  def __init__(self, all_countries, modifier = None, world_state=None):
+    self.all_countries = all_countries
+    self.world_model = WorldModel(all_countries, init_world_state=world_state)
+    self.country_agents = {}
+    self.initialize_agents(modifier)
+
+  def initialize_agents(self, modifier = None):
+    for country in self.all_countries:
+        metrics = self.world_model.metrics[country]
+        agent = CountryAgent(country, modifier)
+        agent.generate_response(metrics, self.world_model.world_state)
+        self.country_agents[country] = agent
+
+  def run_simulation(self):
+    for country, agent in self.country_agents.items():
+        print(f"Country: {country}\n")
+        print(f"Message: {agent.message}\n")
+        print(f"Policy: {agent.policy}")
+        print("-" * 50)
+'''
 class Game:
   def __init__(self, agents):
     self.agents = agents
@@ -286,6 +400,9 @@ def download_log():
     return send_file(buffer, as_attachment=True, download_name='game_log.md', mimetype='text/markdown')
   else:
     return jsonify({"error": "No game log available"}), 400
-
+'''
 if __name__ == "__main__":
-  app.run(debug=True)
+  countries = ["The United States of America", "China", "Russia"]
+  modifier = None #Change this to any string that you want to apply to every country if you want (TODO: Update Flask framework)
+  world_sim = Simulation(countries, modifier = modifier)
+  world_sim.run_simulation()
