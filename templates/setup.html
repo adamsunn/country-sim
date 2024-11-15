@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Setup Simulation</title>
+</head>
+<body>
+    <h1>Setup Simulation</h1>
+    <form method="post" action="{{ url_for('setup') }}">
+        <label for="countries">Countries (comma-separated):</label><br>
+        <input type="text" id="countries" name="countries" value="The United States of America, China, Russia"><br><br>
+
+        <label for="initial_world_state">Initial World State:</label><br>
+        <textarea id="initial_world_state" name="initial_world_state" rows="10" cols="50"></textarea><br><br>
+
+        <label for="number_of_epochs">Number of Epochs:</label><br>
+        <input type="number" id="number_of_epochs" name="number_of_epochs" value="5"><br><br>
+
+        <label for="modifier">Modifier (optional):</label><br>
+        <input type="text" id="modifier" name="modifier"><br><br>
+
+        <input type="submit" value="Start Simulation">
+    </form>
+</body>
+</html>
