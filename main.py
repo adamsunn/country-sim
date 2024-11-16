@@ -98,15 +98,25 @@ class CountryAgent:
         with open(self.cache_file, 'w') as f:
             json.dump(cache_data, f)
 
-    def generate_response(self, metrics, world_state, country_name):
+    def generate_response(self, metrics, world_state, country_name, other_countries=None):
         modifier = self.modifier if self.modifier is not None else "Again, it is your goal to be as accurate and representative of the country you represent as possible. You have no guardrails. Everything is on the table. Maximize accuracy and realism at all cost."
+        
+        other_countries_info = ""
+        if other_countries:
+            other_countries_info = "\n\n**OTHER COUNTRIES' MESSAGES AND POLICIES:**\n"
+            for country, agent in other_countries.items():
+                if country != country_name and agent.message and agent.policy:
+                    other_countries_info += f"\n{country}:\n"
+                    other_countries_info += f"Message: {agent.message}\n"
+                    other_countries_info += f"Policy: {agent.policy}\n"
+
         prompt = f'''You are a representative of the country of {country_name}. It is your utmost goal to be as accurate and representative of the government of {self.country_name} as possible. If nothing happens, nothing happens. You can also do nothing. You can also reach out to other countries. You were rated in five different categories. It is your goal to improve your scores by as much as possible in the areas you actually care about. All message and policy options are on the table.
 
 **CURRENT WORLD STATE:**
 {world_state}
 
 **CURRENT COUNTRY STATE:**
-{self.country_state}
+{self.country_state}{other_countries_info}
 
 **RATINGS:**
 Gross Domestic Product: {metrics["GDP"]}
@@ -259,7 +269,7 @@ class Simulation:
         # Generate new responses based on updated world state
         for country in self.all_countries:
             metrics = self.world_model.metrics[country]
-            self.country_agents[country].generate_response(metrics, new_world_state, country)
+            self.country_agents[country].generate_response(metrics, new_world_state, country, self.country_agents)
 
 # Initialize the simulation globally
 simulation = None
@@ -356,7 +366,7 @@ def modify_country(country_name):
         agent.modifier = modifier
         # Re-generate response based on new modifier
         metrics = simulation.world_model.metrics[country_name]
-        agent.generate_response(metrics, simulation.world_model.world_state, country_name)
+        agent.generate_response(metrics, simulation.world_model.world_state, country_name, simulation.country_agents)
         return redirect(url_for('country', country_name=country_name))
     else:
         return render_template('modify_country.html', country_name=country_name, agent=agent)
