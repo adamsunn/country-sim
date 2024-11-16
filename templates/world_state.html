@@ -1,11 +1,51 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>World State</title>
-</head>
-<body>
-    <h1>World State</h1>
-    <pre>{{ world_state }}</pre>
-    <p><a href="{{ url_for('index') }}">Back to Home</a></p>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}World State{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">World State</h2>
+    <div class="world-state">
+        {% for state in simulation.world_model.world_states %}
+            <div class="state-update">
+                <h5>{{ state.split(':')[0] }}</h5>
+                <p>{{ state.split(':', 1)[1] }}</p>
+            </div>
+        {% endfor %}
+    </div>
+    <div class="mt-3">
+        <a href="{{ url_for('modify_world_state') }}" class="btn btn-warning">Modify World State</a>
+        <button id="advance-epoch-btn" class="btn btn-success">Advance Epoch</button>
+    </div>
+</div>
+<!-- Loading Screen -->
+<div id="loading-screen" style="display: none;">
+    <div class="spinner-border text-primary" role="status"></div>
+    <span class="ml-2">Advancing epoch, please wait...</span>
+</div>
+{% endblock %}
+
+{% block head %}
+<style>
+.world-state {
+    margin-top: 20px;
+}
+
+.state-update {
+    background-color: #e9ecef;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        $('#advance-epoch-btn').on('click', function() {
+            $('#loading-screen').show();
+            window.location.href = "{{ url_for('next_epoch') }}";
+        });
+    });
+</script>
+{% endblock %}

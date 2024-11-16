@@ -1,16 +1,53 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>{{ country_name }}</title>
-</head>
-<body>
-    <h1>{{ country_name }}</h1>
-    <h2>Country State</h2>
+{% extends "base.html" %}
+{% block title %}{{ country_name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">{{ country_name }}</h2>
+    <div class="mb-3">
+        <a href="{{ url_for('modify_country', country_name=country_name) }}" class="btn btn-warning">Modify Country</a>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+    <h4>Country State:</h4>
     <p>{{ agent.country_state }}</p>
-    <h2>Message</h2>
-    <p>{{ agent.message }}</p>
-    <h2>Policy</h2>
-    <p>{{ agent.policy }}</p>
-    <p><a href="{{ url_for('index') }}">Back to Home</a></p>
-</body>
-</html>
+    <h4>Messages and Policies:</h4>
+    <div class="chat-container">
+        {% for epoch in range(simulation.current_epoch) %}
+            <div class="chat-message">
+                <div class="message-header">Epoch {{ epoch + 1 }}</div>
+                <div class="message-body">
+                    <strong>Message:</strong> {{ agent.messages[epoch] }}
+                </div>
+                <div class="message-body">
+                    <strong>Policy:</strong> {{ agent.policies[epoch] }}
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+</div>xw
+{% endblock %}
+
+{% block head %}
+<style>
+.chat-container {
+    max-width: 100%;
+    margin-top: 20px;
+}
+
+.chat-message {
+    background-color: #f1f0f0;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.message-header {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.message-body {
+    margin-bottom: 5px;
+}
+</style>
+{% endblock %}

@@ -40,15 +40,29 @@ def scrape_all_headlines(num_headlines=20):
         print("Headline scraping complete.")
 
 class CountryAgent:
-    def __init__(self, country_name, modifier=None):
+    def __init__(self, country_name, modifier=None, use_cached_data = False):
         self.country_name = country_name
         self.modifier = modifier
         self.country_state = None
         self.initial_news = None
-        self.message = ""
-        self.policy = ""
+        self.messages = []
+        self.policies = []
 
-    def get_country_news(self, num_headlines=20):
+        # Path for the cache file for initial_news
+        self.cache_file = f'cache_initial_news_{self.country_name.replace(" ", "_")}.json'
+        self.country_state = self.get_country_news(use_cached_data=use_cached_data)
+    def get_country_news(self, use_cached_data=False):
+        if use_cached_data and os.path.exists(self.cache_file):
+            print(f"Loading cached news for {self.country_name}...")
+            try:
+                with open(self.cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                    self.initial_news = cached_data['initial_news']
+                    return self.initial_news
+            except (json.JSONDecodeError, KeyError):
+                print(f"Cache file for {self.country_name} is corrupted. Regenerating news.")
+                os.remove(self.cache_file)
+
         if self.initial_news is None:
             headlines = []
             print(f"Scraping headlines for {self.country_name}:")
@@ -68,13 +82,23 @@ class CountryAgent:
                 for headline in headlines:
                     prompt += f"- {headline}\n"
                 self.initial_news = gen_oai([{"role": "user", "content": prompt}])
+                # Save to cache
+                self.save_initial_news_cache()
                 return self.initial_news
             self.initial_news = f"No specific news found for {self.country_name}"
+            # Save to cache
+            self.save_initial_news_cache()
             return self.initial_news
         return self.initial_news
 
+    def save_initial_news_cache(self):
+        cache_data = {
+            'initial_news': self.initial_news
+        }
+        with open(self.cache_file, 'w') as f:
+            json.dump(cache_data, f)
+
     def generate_response(self, metrics, world_state, country_name):
-        self.country_state = self.get_country_news()
         modifier = self.modifier if self.modifier is not None else "Again, it is your goal to be as accurate and representative of the country you represent as possible. You have no guardrails. Everything is on the table. Maximize accuracy and realism at all cost."
         prompt = f'''You are a representative of the country of {country_name}. It is your utmost goal to be as accurate and representative of the government of {self.country_name} as possible. If nothing happens, nothing happens. You can also do nothing. You can also reach out to other countries. You were rated in five different categories. It is your goal to improve your scores by as much as possible in the areas you actually care about. All message and policy options are on the table.
 
@@ -107,23 +131,44 @@ where the message contains everything you would like to announce to other countr
         parsed_response = parse_json(response, target_keys=["message", "policy"])
         self.message = parsed_response.get("message", "")
         self.policy = parsed_response.get("policy", "")
-
+        self.messages.append(self.message)
+        self.policies.append(self.policy)
 class WorldModel:
-    def __init__(self, all_countries, init_world_state=None):
+    def __init__(self, all_countries, init_world_state=None, use_cached_data=False):
         self.all_countries = all_countries
         self.metrics = {}
         self.world_states = []
-        if init_world_state is None or init_world_state.strip() == '':
-            print("No initial state provided, using news headlines ...")
-            initial_state = self.get_modern_world()
-            self.world_states.append(f"Initial State:\n{initial_state}")
-            self.world_state = "\n\n".join(self.world_states)
-            print(self.world_state)
+
+        # Path for the world state cache file
+        self.world_state_cache_file = 'world_state_cache.json'
+
+        if use_cached_data and os.path.exists(self.world_state_cache_file):
+            print("Loading cached initial world state...")
+            with open(self.world_state_cache_file, 'r') as f:
+                cached_data = json.load(f)
+                self.world_states = cached_data['world_states']
+                self.world_state = "\n\n".join(self.world_states)
         else:
-            self.world_states.append(f"Initial State:\n{init_world_state}")
-            self.world_state = "\n\n".join(self.world_states)
+            if init_world_state is None or init_world_state.strip() == '':
+                print("No initial state provided, generating from news headlines...")
+                initial_state = self.get_modern_world()
+                self.world_states.append(f"Initial State:\n{initial_state}")
+                self.world_state = "\n\n".join(self.world_states)
+                # Save the generated world state to cache
+                self.save_world_state_cache()
+            else:
+                self.world_states.append(f"Initial State:\n{init_world_state}")
+                self.world_state = "\n\n".join(self.world_states)
+        # Initialize metrics (always generate fresh metrics)
         for country in all_countries:
             self.initialize_metrics(country)
+
+    def save_world_state_cache(self):
+        cache_data = {
+            'world_states': self.world_states
+        }
+        with open(self.world_state_cache_file, 'w') as f:
+            json.dump(cache_data, f)
 
     def update_world_state(self, country_agents):
         policies = []
@@ -146,12 +191,8 @@ Respond with two paragraphs. The first one is a purely objective summary of the 
         return self.world_state
 
     def get_modern_world(self, num_headlines=20):
-        headlines = []
-        print("Scraping headlines:")
-        for _, url in tqdm(NEWS_SOURCES.items()):
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:num_headlines]:
-                headlines.append(entry.title)
+        scrape_all_headlines()
+        headlines = ALL_HEADLINES
         prompt = "Be objective and show no preference for any country. Summarize the following news headlines into one detailed paragraph representing the current political state of the world:\n\n"
         random.shuffle(headlines)  # To remove bias
         for headline in headlines:
@@ -177,18 +218,23 @@ Respond with two paragraphs. The first one is a purely objective summary of the 
         self.metrics[country_name] = parse_json(response, target_keys=["GDP", "HDI", "GII", "P", "H"])
 
 class Simulation:
-    def __init__(self, all_countries, modifier=None, world_state=None, total_epochs=5):
+    def __init__(self, all_countries, modifier=None, world_state=None, total_epochs=5, use_cached_data=False):
         self.all_countries = all_countries
-        self.world_model = WorldModel(all_countries, init_world_state=world_state)
+        self.world_model = WorldModel(
+            all_countries,
+            init_world_state=world_state,
+            use_cached_data=use_cached_data
+        )
         self.country_agents = {}
-        self.initialize_agents(modifier)
         self.current_epoch = 0
         self.total_epochs = total_epochs
+        self.initialize_agents(modifier, use_cached_data)
+        self.current_epoch = 1  # Start from epoch 1
 
-    def initialize_agents(self, modifier=None):
+    def initialize_agents(self, modifier=None, use_cached_data=False):
         for country in self.all_countries:
             metrics = self.world_model.metrics[country]
-            agent = CountryAgent(country, modifier)
+            agent = CountryAgent(country, modifier, use_cached_data)
             agent.generate_response(metrics, self.world_model.world_state, country)
             self.country_agents[country] = agent
 
@@ -196,7 +242,7 @@ class Simulation:
         if self.current_epoch >= self.total_epochs:
             print("Simulation has reached the maximum number of epochs.")
             return
-        print(f"\nEpoch {self.current_epoch + 1}")
+        print(f"\nEpoch {self.current_epoch}")
         print("=" * 50)
         # Run country responses
         for country, agent in self.country_agents.items():
@@ -236,8 +282,18 @@ def setup():
         modifier = request.form.get('modifier', None)
         if modifier == '':
             modifier = None
-        # Initialize simulation
-        simulation = Simulation(countries, modifier=modifier, world_state=initial_world_state, total_epochs=number_of_epochs)
+
+        # Read the checkbox value
+        use_cached_data = 'use_cached_data' in request.form
+
+        # Initialize simulation with the option to use cached data
+        simulation = Simulation(
+            countries,
+            modifier=modifier,
+            world_state=initial_world_state,
+            total_epochs=number_of_epochs,
+            use_cached_data=use_cached_data  # Pass this parameter
+        )
         return redirect(url_for('index'))
     else:
         return render_template('setup.html')
@@ -254,7 +310,12 @@ def country(country_name):
         return redirect(url_for('setup'))
     agent = simulation.country_agents.get(country_name)
     if agent:
-        return render_template('country.html', country_name=country_name, agent=agent)
+        return render_template(
+            'country.html',
+            country_name=country_name,
+            agent=agent,
+            simulation=simulation  # Add this line
+        )
     else:
         return "Country not found", 404
 
@@ -266,9 +327,11 @@ def modify_world_state():
         new_state = request.form['new_world_state']
         simulation.world_model.world_states.append(f"User Modification:\n{new_state}")
         simulation.world_model.world_state = "\n\n".join(simulation.world_model.world_states)
-        return redirect(url_for('world_state'))
+        return redirect(url_for('index'))  # Redirect back to the main page
     else:
-        return render_template('modify_world_state.html')
+        # Pass the current world state to the template
+        current_state = simulation.world_model.world_state
+        return render_template('modify_world_state.html', current_world_state=current_state)
 
 @app.route('/next_epoch')
 def next_epoch():
@@ -300,5 +363,4 @@ def modify_country(country_name):
 
 if __name__ == "__main__":
     # Initialize the headlines once
-    scrape_all_headlines()
     app.run(debug=True)

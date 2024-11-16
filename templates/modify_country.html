@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Modify {{ country_name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">Modify {{ country_name }}</h2>
+    <form action="{{ url_for('modify_country', country_name=country_name) }}" method="post">
+        <div class="form-group">
+            <label for="modifier">Modifier (optional):</label>
+            <textarea class="form-control" id="modifier" name="modifier" rows="5">{{ agent.modifier }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Update Country</button>
+    </form>
+</div>
+{% endblock %}

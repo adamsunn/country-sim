@@ -20,40 +20,51 @@ oai = OpenAI(api_key = OPENAI_API_KEY)
 ant = Anthropic()
 ant.api_key = os.getenv('ANTHROPIC_API_KEY')
 
-def gen_oai(messages, model='gpt-4o', temperature=1):
-  if model == None:
-    model = 'gpt-4o'
-  try:
-    response = oai.chat.completions.create(
-      model=model,
-      temperature=temperature,
-      messages=messages,
-      max_tokens=2000
-    )
-    content = response.choices[0].message.content
-    token_usage = response.usage
-    input_tokens = token_usage.prompt_tokens
-    output_tokens = token_usage.completion_tokens
-    
-    # Current pricing
-    input_cost_per_1k = 0.005  # Cost per 1k input tokens
-    output_cost_per_1k = 0.015  # Cost per 1k output tokens
-    
-    # Calculate costs
-    input_cost = (input_tokens / 1000) * input_cost_per_1k
-    output_cost = (output_tokens / 1000) * output_cost_per_1k
-    total_cost = input_cost + output_cost
-    
-    # Print detailed cost breakdown
-    print(f"API call cost breakdown:")
-    print(f" - Input tokens: {input_tokens} tokens ($ {input_cost:.4f})")
-    print(f" - Output tokens: {output_tokens} tokens ($ {output_cost:.4f})")
-    print(f" - Total cost: $ {total_cost:.4f}")
+def gen_oai(messages, model='gpt-4o', temperature=1, max_attempts = 3):
+    if model is None:
+        model = 'gpt-4o'
+    attempts = 0
+    while attempts < max_attempts:
+        try:
+            response = oai.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=messages,
+                max_tokens=2000
+            )
+            content = response.choices[0].message.content
+            token_usage = response.usage
+            input_tokens = token_usage.prompt_tokens
+            output_tokens = token_usage.completion_tokens
+            
+            # Current pricing
+            input_cost_per_1k = 0.005  # Cost per 1k input tokens
+            output_cost_per_1k = 0.015  # Cost per 1k output tokens
+            
+            # Calculate costs
+            input_cost = (input_tokens / 1000) * input_cost_per_1k
+            output_cost = (output_tokens / 1000) * output_cost_per_1k
+            total_cost = input_cost + output_cost
+            
+            # Print detailed cost breakdown
+            print(f"API call cost breakdown:")
+            print(f" - Input tokens: {input_tokens} tokens ($ {input_cost:.4f})")
+            print(f" - Output tokens: {output_tokens} tokens ($ {output_cost:.4f})")
+            print(f" - Total cost: $ {total_cost:.4f}")
 
-    return content
-  except Exception as e:
-    print(f"Error generating completion: {e}")
-    raise e
+            # Check if content is empty or only whitespace
+            if content.strip() == "":
+                attempts += 1
+                print(f"Attempt {attempts}: Received empty or whitespace response. Retrying...")
+                continue
+            
+            return content
+        except Exception as e:
+            print(f"Error generating completion on attempt {attempts + 1}: {e}")
+            attempts += 1
+            if attempts >= max_attempts:
+              continue
+    return ""
 
 def gen_o1(messages, temperature=1):
   try:

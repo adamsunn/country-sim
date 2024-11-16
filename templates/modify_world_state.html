@@ -1,14 +1,15 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Modify World State</title>
-</head>
-<body>
-    <h1>Modify World State</h1>
-    <form method="post">
-        <textarea name="new_world_state" rows="10" cols="80"></textarea><br>
-        <input type="submit" value="Submit">
+{% extends "base.html" %}
+{% block title %}Modify World State{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">Modify World State</h2>
+    <form action="{{ url_for('modify_world_state') }}" method="post">
+        <div class="form-group">
+            <label for="new_world_state">New World State:</label>
+            <textarea class="form-control" id="new_world_state" name="new_world_state" rows="10">{{ current_world_state }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Update World State</button>
     </form>
-    <p><a href="{{ url_for('index') }}">Back to Home</a></p>
-</body>
-</html>
+</div>
+{% endblock %}

@@ -1,22 +1,109 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Country Simulation</title>
-</head>
-<body>
-    <h1>Country Simulation</h1>
+{% extends "base.html" %}
+{% block title %}Simulation Dashboard{% endblock %}
 
-    <ul>
-        <li><a href="{{ url_for('world_state') }}">View World State</a></li>
-        <li><a href="{{ url_for('modify_world_state') }}">Modify World State</a></li>
-        <li><a href="{{ url_for('next_epoch') }}">Advance to Next Epoch</a></li>
-    </ul>
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">Simulation Dashboard</h2>
 
-    <h2>Countries</h2>
-    <ul>
-        {% for country in countries %}
-            <li><a href="{{ url_for('country', country_name=country) }}">{{ country }}</a></li>
+    <!-- World State -->
+    <div class="world-state mt-4">
+        <h3>World State</h3>
+        <div class="state-update">
+            {% for state in simulation.world_model.world_states %}
+                <div class="state-section">
+                    <h5>{{ state.split(':')[0] }}</h5>
+                    <p>{{ state.split(':', 1)[1] }}</p>
+                </div>
+            {% endfor %}
+        </div>
+        <div class="mt-3">
+            <a href="{{ url_for('modify_world_state') }}" class="btn btn-warning">Modify World State</a>
+        </div>
+    </div>
+
+    <!-- Messages and Policies -->
+    <div class="chat-container mt-5">
+        <h3>Messages and Policies</h3>
+        {% for epoch in range(simulation.current_epoch) %}
+            <div class="epoch-section">
+                <h4>Epoch {{ epoch}}</h4>
+                {% for country_name, agent in simulation.country_agents.items() %}
+                    <div class="chat-message">
+                        <div class="message-header">
+                            <strong>{{ country_name }}</strong>
+                        </div>
+                        <div class="message-body">
+                            <strong>Message:</strong> {{ agent.messages[epoch] }}
+                        </div>
+                        <div class="message-body">
+                            <strong>Policy:</strong> {{ agent.policies[epoch] }}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
         {% endfor %}
-    </ul>
-</body>
-</html>
+    </div>
+
+    <!-- Controls -->
+    <div class="mt-3">
+        <button id="advance-epoch-btn" class="btn btn-success">Advance Epoch</button>
+    </div>
+
+</div>
+
+<!-- Loading Screen -->
+<div id="loading-screen" style="display: none;">
+    <div class="spinner-border text-primary" role="status"></div>
+    <span class="ml-2">Processing, please wait...</span>
+</div>
+{% endblock %}
+
+{% block head %}
+<style>
+.world-state {
+    background-color: #e9ecef;
+    padding: 15px;
+    border-radius: 5px;
+}
+
+.state-update .state-section {
+    margin-bottom: 15px;
+}
+
+.chat-container {
+    margin-top: 20px;
+}
+
+.epoch-section {
+    margin-bottom: 30px;
+}
+
+.chat-message {
+    background-color: #f1f0f0;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.message-header {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.message-body {
+    margin-bottom: 5px;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        $('#advance-epoch-btn').on('click', function(event) {
+            event.preventDefault();  // Prevent default action
+            $('#loading-screen').show();
+            window.location.href = "{{ url_for('next_epoch') }}";
+        });
+    });
+</script>
+{% endblock %}
