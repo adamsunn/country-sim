@@ -1,189 +1,422 @@
-{% extends "base.html" %}
-{% block title %}Simulation Dashboard{% endblock %}
-
-{% block content %}
-<div class="container mt-5">
-    <h2 class="mb-4">Simulation Dashboard</h2>
-
-    <!-- Controls -->
-    <div class="mb-4">
-        <button id="advance-epoch-btn" class="btn btn-success">Advance Epoch</button>
-        <a href="{{ url_for('modify_world_state') }}" class="btn btn-warning">Modify World State</a>
-    </div>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>multi-agent</title>
+  <script src="https://unpkg.com/@popperjs/core@2"></script>
+  <script src="https://unpkg.com/tippy.js@6"></script>
+  <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light.css"/>
+  <style>
+    :root {
+      --primary-color: #3498db;
+      --secondary-color: #2c3e50;
+      --background-color: #fcfcfc;
+      --text-color: #34495e;
+      --border-color: #bdc3c7;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      font-size: 14px;
+      background-color: var(--background-color);
+      color: var(--text-color);
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .game-container {
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+      background-color: var(--background-color);
+      padding: 20px;
+      padding-top: 40px;
+    }
+    .agent-row {
+      max-width: 600px;
+      margin: 0 auto 20px;
+      padding-bottom: 20px;
+    }
+    .message-container {
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .agent-name {
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #777;
+    }
+    .message-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .message-group.user-agent {
+      align-items: flex-end;
+    }
+    .message {
+      max-width: 70%;
+      padding: 8px 12px;
+      margin: 2px 0;
+      border-radius: 18px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .message.user-agent {
+      background-color: var(--primary-color);
+      color: white;
+    }
+    .message.other-agent {
+      background-color: #e5e5ea;
+      color: #000000;
+    }
+    /* Remove special formatting for first and last bubbles */
     
+    .user-agent .agent-name {
+      text-align: right;
+    }
+    h1 {
+      color: var(--secondary-color);
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    button {
+      font-size: 14px;
+      padding: 8px 16px;
+      margin-right: 10px;
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    button:disabled {
+      background-color: var(--border-color);
+      cursor: not-allowed;
+    }
+    .tippy-box[data-theme~='custom'] {
+      background-color: white;
+      color: var(--text-color);
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .game-layout {
+      display: flex;
+      gap: 20px;
+    }
+    .messages-column {
+      flex: 3;
+    }
+    .votes-column {
+      flex: 1;
+      background-color: #f0f0f0;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .vote-item {
+      margin-bottom: 10px;
+    }
+    .start-page {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    .form-group input, .form-group textarea {
+      width: calc(100% - 16px); 
+      padding: 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      box-sizing: border-box; 
+    }
+    .input-with-prefix {
+      display: flex;
+      flex-direction: column;
+      background-color: white;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+    }
 
-    <!-- Epochs Loop (Reversed Order) -->
-    {% set total_epochs = simulation.current_epoch %}
-    {% for epoch in range(total_epochs - 1, -1, -1) %}
-        <div class="epoch-section mt-5">
-            <h3>Epoch {{ epoch + 1 }}</h3>
-            <div class="row">
-                <!-- Policies Section -->
-                <div class="col-md-6">
-                    <h4>Policies Implemented</h4>
-                    <div class="accordion" id="policiesAccordionEpoch{{ epoch }}">
-                        {% for country_name, agent in simulation.country_agents.items() %}
-                            <div class="card">
-                                <div class="card-header" id="policyHeading{{ epoch }}{{ loop.index0 }}">
-                                    <h2 class="mb-0">
-                                        <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#policyCollapse{{ epoch }}{{ loop.index0 }}" aria-expanded="false" aria-controls="policyCollapse{{ epoch }}{{ loop.index0 }}">
-                                            {{ country_name }}
-                                        </button>
-                                    </h2>
-                                </div>
-                                <div id="policyCollapse{{ epoch }}{{ loop.index0 }}" class="collapse" aria-labelledby="policyHeading{{ epoch }}{{ loop.index0 }}" data-parent="#policiesAccordionEpoch{{ epoch }}">
-                                    <div class="card-body">
-                                        {{ agent.policies[epoch] }}
-                                    </div>
-                                </div>
-                            </div>
-                        {% endfor %}
-                    </div>
-                </div>
+    .input-prefix {
+      padding: 8px;
+      background-color: white;
+      border-bottom: 1px solid var(--border-color);
+      border-radius: 4px 4px 0 0;
+    }
 
-                <!-- Messages Section -->
-                <div class="col-md-6">
-                    <h4>Messages</h4>
-                    <div class="accordion" id="messagesAccordionEpoch{{ epoch }}">
-                        {% for country_name, agent in simulation.country_agents.items() %}
-                            <div class="card">
-                                <div class="card-header" id="messageHeading{{ epoch }}{{ loop.index0 }}">
-                                    <h2 class="mb-0">
-                                        <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#messageCollapse{{ epoch }}{{ loop.index0 }}" aria-expanded="false" aria-controls="messageCollapse{{ epoch }}{{ loop.index0 }}">
-                                            {{ country_name }}
-                                        </button>
-                                    </h2>
-                                </div>
-                                <div id="messageCollapse{{ epoch }}{{ loop.index0 }}" class="collapse" aria-labelledby="messageHeading{{ epoch }}{{ loop.index0 }}" data-parent="#messagesAccordionEpoch{{ epoch }}">
-                                    <div class="card-body">
-                                        {{ agent.messages[epoch] }}
-                                    </div>
-                                </div>
-                            </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-        </div>
-    {% endfor %}
+    .input-with-prefix textarea {
+      flex-grow: 1;
+      border: none;
+      border-radius: 0 0 4px 4px;
+      padding: 8px;
+      min-height: 80px; 
+      resize: none; 
+    }
 
-    <!-- World State -->
-    <div class="world-state mt-5">
-        <h3>World State</h3>
-        <div class="accordion" id="worldStateAccordion">
-            {% for index in range(simulation.world_model.world_states|length - 1, -1, -1) %}
-                {% set state = simulation.world_model.world_states[index] %}
-                <div class="card">
-                    <div class="card-header" id="heading{{ index }}">
-                        <h2 class="mb-0">
-                            <button class="btn btn-link btn-block text-left {% if not loop.first %}collapsed{% endif %}" type="button" data-toggle="collapse" data-target="#collapse{{ index }}" aria-expanded="{% if loop.first %}true{% else %}false{% endif %}" aria-controls="collapse{{ index }}">
-                                {{ state.split(':')[0] }}
-                            </button>
-                        </h2>
-                    </div>
+    .input-with-prefix textarea::placeholder {
+      color: #999;
+    }
 
-                    <div id="collapse{{ index }}" class="collapse {% if loop.first %}show{% endif %}" aria-labelledby="heading{{ index }}" data-parent="#worldStateAccordion">
-                        <div class="card-body">
-                            {{ state.split(':', 1)[1] }}
-                        </div>
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0, 0, 0, 0.1);
+      border-radius: 50%;
+      border-top-color: var(--primary-color);
+      animation: spin 1s ease-in-out infinite;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>multi-agent</h1>
+    <div id="start-page" class="start-page">
+      <div class="form-group">
+        <label for="num-rounds">Number of rounds:</label>
+        <input type="number" id="num-rounds" min="1" value="3" style="width: 50px;">
+      </div>
+      <div class="form-group">
+        <label for="country-names">Enter country names (separated by commas):</label>
+        <textarea id="country-names" rows="4" required placeholder="United States, China, Germany"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="policy">Enter policy description:</label>
+        <textarea id="policy" rows="4" required placeholder="Describe the policy here..."></textarea>
+      </div>
+      <button id="start-game">Start</button>
     </div>
-
-    <!-- Country States Section -->
-    <div class="country-states mt-5">
-        <h3>Country States</h3>
-        <div class="accordion" id="countryStatesAccordion">
-            {% for country_name, agent in simulation.country_agents.items() %}
-                <div class="card">
-                    <div class="card-header" id="stateHeading{{ loop.index0 }}">
-                        <h2 class="mb-0">
-                            <button class="btn btn-link btn-block text-left collapsed" type="button" data-toggle="collapse" data-target="#stateCollapse{{ loop.index0 }}" aria-expanded="false" aria-controls="stateCollapse{{ loop.index0 }}">
-                                {{ country_name }}
-                            </button>
-                        </h2>
-                    </div>
-                    <div id="stateCollapse{{ loop.index0 }}" class="collapse" aria-labelledby="stateHeading{{ loop.index0 }}" data-parent="#countryStatesAccordion">
-                        <div class="card-body">
-                            {{ agent.country_state }}
-                        </div>
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
+    <div id="game-page" style="display: none;">
+      <div class="controls">
+        <button id="next-round" disabled>Next Round</button>
+        <button id="reset-game">Reset</button>
+        <button id="download-log" style="display: none;">Download Log</button>
+      </div>
+      <div id="round-info-container">
+        <span id="round-info"></span>
+        <div id="loading-spinner" class="spinner" style="display: none;"></div>
+      </div>
     </div>
-</div>
+  </div>
+  <div id="game-layout" class="game-layout" style="display: none;">
+    <div id="game-container" class="game-container messages-column"></div>
+    <div class="container">
+      <div id="votes-container" class="votes-column" style="display: none;">
+        <h3>Votes</h3>
+        <div id="votes-list"></div>
+      </div>
+    </div>
+  </div>
 
-<!-- Loading Screen -->
-<div id="loading-screen" style="display: none;">
-    <div class="spinner-border text-primary" role="status"></div>
-    <span class="ml-2">Processing, please wait...</span>
-</div>
-{% endblock %}
+  <script>
+  const startPage = document.getElementById('start-page');
+  const gamePage = document.getElementById('game-page');
+  const gameLayout = document.getElementById('game-layout');
+  const numRoundsInput = document.getElementById('num-rounds');
+  const countryNamesInput = document.getElementById('country-names');  // New input for country names
+  const policyInput = document.getElementById('policy');
+  const startGameBtn = document.getElementById('start-game');
+  const resetGameBtn = document.getElementById('reset-game');
+  const roundInfo = document.getElementById('round-info');
+  const gameContainer = document.getElementById('game-container');
+  const loadingSpinner = document.getElementById('loading-spinner');
+  const downloadLogBtn = document.getElementById('download-log');
 
-{% block head %}
-<style>
-/* Controls */
-.mb-4 {
-    display: flex;
-    gap: 10px;
-}
+  let currentRound = 0;
+  let totalRounds = 3;
+  let roundData = [];
 
-/* Country States Section */
-.country-states {
-    margin-top: 30px;
-}
+  function createThoughtsContent(data) {
+    return `
+      <h4>Reflection:</h4>
+      <p>${data.reflection}</p>
+      <h4>Plan:</h4>
+      <p>${data.plan}</p>
+    `;
+  }
 
-/* Epoch Section */
-.epoch-section {
-    border-bottom: 1px solid #ccc;
-    padding-bottom: 20px;
-}
+  function updateRoundInfo() {
+    if (currentRound === totalRounds) {
+      roundInfo.textContent = "Voting in progress";
+    } else {
+      roundInfo.textContent = `Round ${currentRound} of ${totalRounds}`;
+    }
+  }
 
-/* Policies and Messages */
-.card-header {
-    background-color: #e9ecef;
-}
+  function displayVotes(votes) {
+    const votesList = document.getElementById('votes-list');
+    votesList.innerHTML = '';
+    for (const [country, vote] of Object.entries(votes)) {
+      const voteItem = document.createElement('div');
+      voteItem.className = 'vote-item';
+      voteItem.textContent = `${country} voted to ${vote}`;
+      votesList.appendChild(voteItem);
+    }
+    document.getElementById('votes-container').style.display = 'block';
+  }
 
-.card-body {
-    background-color: #f7f7f7;
-}
+  function displayMessage(agentData) {
+    const agentRow = document.createElement('div');
+    agentRow.className = 'agent-row';
 
-h4 {
-    margin-top: 20px;
-}
+    const messageGroup = document.createElement('div');
+    messageGroup.className = 'message-group other-agent';
 
-/* World State Accordion */
-.world-state {
-    margin-top: 30px;
-}
+    const messageBubble = document.createElement('div');
+    messageBubble.className = 'message other-agent';
+    messageBubble.textContent = agentData.message;
+    messageGroup.appendChild(messageBubble);
 
-.accordion .card-header {
-    background-color: #e9ecef;
-}
+    agentRow.innerHTML = `
+      <div class="message-container">
+        <div class="agent-name">${agentData.name}</div>
+      </div>
+    `;
 
-.accordion .btn-link {
-    text-decoration: none;
-    color: #000;
-}
+    agentRow.querySelector('.message-container').appendChild(messageGroup);
 
-.accordion .card-body {
-    background-color: #f7f7f7;
-}
-</style>
-{% endblock %}
+    gameContainer.appendChild(agentRow);
+    gameContainer.scrollTop = gameContainer.scrollHeight;
 
-{% block scripts %}
-<script>
-    $(document).ready(function() {
-        $('#advance-epoch-btn').on('click', function(event) {
-            event.preventDefault();  // Prevent default action
-            $('#loading-screen').show();
-            window.location.href = "{{ url_for('next_epoch') }}";
-        });
+    tippy(messageGroup, {
+      content: createThoughtsContent(agentData),
+      theme: 'custom',
+      placement: 'left-start',
+      allowHTML: true,
+      interactive: true,
+      maxWidth: 300,
     });
+  }
+
+  function showLoadingSpinner() {
+    loadingSpinner.style.display = 'inline-block';
+  }
+
+  function hideLoadingSpinner() {
+    loadingSpinner.style.display = 'none';
+  }
+
+  function startGame() {
+    const countryNames = countryNamesInput.value.trim();
+    if (!countryNames) {
+      alert('Please enter at least one country name.');
+      return;
+    }
+    
+    const policy = policyInput.value.trim();
+      if (!policy) {
+        alert('Please enter a policy.');
+        return;
+    }
+
+    totalRounds = parseInt(numRoundsInput.value);
+    currentRound = 1;
+
+    const countryNameList = countryNames.split(',').map(name => name.trim());
+
+    fetch('/add_agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        country_names: countryNameList,
+        policy: policy
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'success') {
+        startPage.style.display = 'none';
+        gamePage.style.display = 'block';
+        gameLayout.style.display = 'flex';
+        updateRoundInfo();
+        startRound();
+      } else {
+        alert('Failed to add agents. Please try again.');
+      }
+    });
+  }
+
+  function startRound() {
+    showLoadingSpinner();
+    fetchNextRound();
+  }
+
+  function fetchNextRound() {
+    fetch('/next_round', { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ current_round: currentRound, total_rounds: totalRounds }) 
+    })
+    .then(response => response.json())
+    .then(data => {
+      hideLoadingSpinner();
+      if (data.finished) {
+        displayVotes(data.votes);
+        gameContainer.innerHTML += `<p>Game finished. The policy has ${data.outcome.toLowerCase()}. Press "Reset Game" to start over.</p>`;
+        downloadLogBtn.style.display = 'inline-block';
+      } else {
+        data.round_data.forEach(agentData => {
+          displayMessage(agentData);
+        });
+        currentRound += 1;
+        updateRoundInfo();
+        showLoadingSpinner();
+        setTimeout(fetchNextRound, 500); // short delay before fetching next round
+      }
+    });
+  }
+
+  startGameBtn.addEventListener('click', startGame);
+
+  resetGameBtn.addEventListener('click', () => {
+    fetch('/reset', { method: 'POST' })
+      .then(response => response.json())
+      .then(data => {
+        if (data.status === 'reset') {
+          gameContainer.innerHTML = '';
+          document.getElementById('votes-container').style.display = 'none';
+          roundInfo.textContent = '';
+          startPage.style.display = 'block';
+          gamePage.style.display = 'none';
+          gameLayout.style.display = 'none';
+          downloadLogBtn.style.display = 'none';
+          currentRound = 0;
+        }
+      });
+  });
+
+  downloadLogBtn.addEventListener('click', () => {
+    window.location.href = '/download_log';
+  });
 </script>
-{% endblock %}
+</body>
+</html>
