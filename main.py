@@ -1,6 +1,7 @@
 import os
 import random
 import io
+import json
 from flask import Flask, render_template, jsonify, request, send_file
 from llm_utils import *
 import feedparser
@@ -71,18 +72,6 @@ class Agent:
 YOU: You are the representative of {self.name}. Your utmost goal is to accurately and faithfully represent the government of {self.name} in all interactions and decisions. Prioritize the interests of {self.name}, maximizing accuracy and realism at all cost.
 STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
     def get_country_news(self, use_cached_data=False):
-        '''
-        if use_cached_data and os.path.exists(self.cache_file):
-            print(f"Loading cached news for {self.name}...")
-            try:
-                with open(self.cache_file, 'r') as f:
-                    cached_data = json.load(f)
-                    country_state = cached_data['country_state']
-                    return country_state
-            except (json.JSONDecodeError, KeyError):
-                print(f"Cache file for {self.name} is corrupted. Regenerating news.")
-                os.remove(self.cache_file)
-        '''
         headlines = []
         print(f"Scraping headlines for {self.name}:")
         search_terms = [self.name.lower()]
@@ -105,20 +94,70 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
                 prompt += f"- {headline}\n"
             prompts = [{"role": "system", "content": self._create_system_prompt()}, {"role": "user", "content": prompt}]
             country_state = gen_oai(prompts)
-            # Save to cache
-            #self.save_country_state_cache(country_state)
             return country_state
         country_state = f"No specific news found for {self.name}"
-        # Save to cache
-        #self.save_country_state_cache(country_state)
         return country_state
-    
-    def save_country_state_cache(self, country_state):
-        cache_data = {
-            'country_state': country_state
-        }
-        with open(self.cache_file, 'w') as f:
-            json.dump(cache_data, f)
+
+    def decide_to_speak(self, gamestate):
+        system_prompt = self._create_system_prompt()
+        instruction = "Based on the current discussion, decide whether you want to request to speak in the next round. Respond with ONLY 'Yes' if you wish to speak, or 'No' if you do not wish to speak."
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": gamestate},
+            {"role": "user", "content": instruction},
+        ]
+        response = gen_oai(messages)
+        return response.strip().lower() == 'yes'
+
+class Chairperson:
+    def __init__(self, agents, policy):
+        self.speakers_list = []
+        self.agents = agents  # list of Agent objects
+        self.policy = policy
+    def _create_system_prompt(self):
+        return f"""You are the Chairperson of the UN meeting which is currently discussing the following policy: {self.policy}. The countries in attendance are {', '.join(a.name for a in self.agents)}. Your role is to manage the flow of the meeting fairly and objectively, according to UN procedures."""
+    def manage_speakers_list(self, gamestate, requests, current_round, total_rounds):
+        prompt = f"""Create a speakers list based on the countries that have requested to speak, following UN rules. The following countries have requested to speak: {', '.join(requests)}. Based on UN procedures, determine the order in which they should speak. Return ONLY an ordered list of countries in a JSON object with key 'speakers_order'."""
+        messages = [
+            {"role": "system", "content": self._create_system_prompt()},
+            {"role": "user", "content": gamestate},
+            {"role": "user", "content": prompt},
+        ]
+
+        if not requests:
+            # Handle the case where no agents have requested to speak
+            no_requests_prompt = """No delegates have requested to speak. As the Chairperson, make an announcement encouraging delegates to participate in the discussion. Provide your announcement as a JSON object with a key 'announcement'."""
+            messages = [
+            {"role": "system", "content": self._create_system_prompt()},
+            {"role": "user", "content": gamestate},
+            {"role": "user", "content": no_requests_prompt},
+            ]
+            response = gen_oai(messages)
+            try:
+                data = json.loads(response)
+                announcement = data.get('announcement', 'Chairperson: I encourage delegates to share their views on the matter at hand.')
+                return [], announcement
+            except json.JSONDecodeError:
+                # If parsing fails, return a default announcement
+                announcement = 'Chairperson: I encourage delegates to share their views on the matter at hand.'
+                return [], announcement
+
+        response = gen_oai(messages)
+        try:
+            data = json.loads(response)
+            speakers_order = data.get('speakers_order', requests)
+            return speakers_order, []
+        except json.JSONDecodeError:
+            # If parsing fails, fall back to the requests list as is, and no announcements
+            return requests, None
+    def open_discussion(self):
+        prompt = f"The discussion has just begun. The countries in attendance of the meeting are {', '.join(a.name for a in self.agents)}. They are here to discuss the following policy: {self.policy}. Create an opening statement to begin the meeting."
+        messages = [
+            {"role": "system", "content": self._create_system_prompt()},
+            {"role": "user", "content": prompt},
+        ]
+        response = gen_oai(messages)
+        return response
 
 class Game:
     def __init__(self, agents, policy):
@@ -129,10 +168,12 @@ class Game:
         self.outcome = ""
         self.gamestate = "Nothing has been said yet. Start the conversation. You don't know anything about the other countries yet, and vice versa.\n"
         self.log = ""
+        self.chairperson = Chairperson(self.agents, self.policy)
 
     def update_gamestate(self, agent_name, message):
         self.public_messages.append(f"{agent_name}: {message}")
         self.gamestate = "START OF CONVERSATION SO FAR.\n" + "\n".join(self.public_messages) + "\nEND OF CONVERSATION SO FAR."
+
     def summarize_thoughts(self, agent):
         if not agent.internal_states:
             return ""
@@ -149,6 +190,7 @@ class Game:
         ]
         output = gen_oai(prompts)
         return f"REFLECTION ON WHOLE CONVERSATION:\n{output}"
+
     def instruct_agent(self, agent, instruction, final_thoughts= None):
         system_prompt = self._create_system_prompt(agent)
         messages = [
@@ -163,17 +205,15 @@ class Game:
         messages.append({"role": "user", "content": self.gamestate})
         messages.append({"role": "user", "content": instruction})
         return gen_oai(messages)
-    
+
     def _create_system_prompt(self, agent):
-        country_state_string = "Consider the state of your country as given." if agent.country_state is not None else ""
+        country_state_string = "Consider the state of your country as given and reference it throughout your discussion." if agent.country_state is not None else ""
         return f"""
 YOU: You are the representative of {agent.name}. Your utmost goal is to accurately and faithfully represent the government of {agent.name} in all interactions and decisions.{country_state_string} Prioritize the interests of {agent.name}, maximizing accuracy and realism at all cost.
 
 SCENARIO: You are attending a United Nations meeting with the countries {', '.join(a.name for a in self.agents)}. The meeting is to discuss and vote on a proposed UN policy: "{self.policy}". At the end of the discussion, each country will vote on whether to adopt the policy.
 
 STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
-
-
 
     def _get_modules_for_round(self, current_round, total_rounds):
         if current_round == 1:
@@ -198,34 +238,66 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         modules = self._get_modules_for_round(current_round, total_rounds)
         target_keys = [module["name"] for module in modules]
         include_reflection = "vote_plan" in target_keys
-        shuffled_agents = self.agents[:]
-        random.shuffle(shuffled_agents)
-        for agent in shuffled_agents:
-            print("=" * 20)
-            instruction = modular_instructions(modules)
-            agent_data = {"name": agent.name}
-            if include_reflection:
-                final_thoughts = self.summarize_thoughts(agent)
-                agent_data["final_thoughts"] = final_thoughts
-            else:
-                final_thoughts = None
-            response = self.instruct_agent(agent, instruction, final_thoughts = final_thoughts)
-            parsed = parse_json(response, target_keys=target_keys)
 
-            for key in target_keys:
-                if key in parsed:
-                    agent_data[key] = parsed[key]
-                    print(f"{agent.name} {key.upper()}: {parsed[key]}")
-                    print()
-            internal_outputs = {key: parsed[key] for key in target_keys if key == 'reflection' and key in parsed}
-            agent.internal_states.append(internal_outputs)
-                
-            if "message" in parsed:
-                self.update_gamestate(agent.name, parsed["message"])
-            
-            self._update_log(agent_data, current_round)
-            
-            round_data.append(agent_data)
+        # First round: All agents make introductions, Last round: All agents vote
+        if current_round == 1 or include_reflection:
+            requests = [agent.name for agent in self.agents]
+            #Chairperson starts conversation
+        else:
+            # Agents decide whether to request to speak
+            requests = []
+            for agent in self.agents:
+                wants_to_speak = agent.decide_to_speak(self.gamestate)
+                if wants_to_speak:
+                    requests.append(agent.name)
+
+        #Open meeting
+        if current_round == 1:
+            opening_statement = self.chairperson.open_discussion()
+            self.update_gamestate("Chairperson", opening_statement)
+            chairperson_data = {"name": "Chairperson", "message": opening_statement}
+            round_data.append(chairperson_data)
+            self._update_log(chairperson_data, current_round)
+        # Chairperson manages the speakers list
+        if not include_reflection:
+            speakers_order, announcement = self.chairperson.manage_speakers_list(self.gamestate, requests, current_round, total_rounds)
+        else:
+            speakers_order, announcement = requests, None #Voting order doesn't matter
+
+        if announcement is not None: #No agents want to speak, encourage them
+            self.update_gamestate("Chairperson", announcement)
+            chairperson_data = {"name": "Chairperson", "message": announcement}
+            round_data.append(chairperson_data)
+            self._update_log(chairperson_data, current_round)
+        else:
+            # Proceed to have agents speak in order
+            for agent_name in speakers_order:
+                agent = next(a for a in self.agents if a.name == agent_name)
+                print("=" * 20)
+                instruction = modular_instructions(modules)
+                agent_data = {"name": agent.name}
+                if include_reflection:
+                    final_thoughts = self.summarize_thoughts(agent)
+                    agent_data["final_thoughts"] = final_thoughts
+                else:
+                    final_thoughts = None
+                response = self.instruct_agent(agent, instruction, final_thoughts = final_thoughts)
+                parsed = parse_json(response, target_keys=target_keys)
+
+                for key in target_keys:
+                    if key in parsed:
+                        agent_data[key] = parsed[key]
+                        print(f"{agent.name} {key.upper()}: {parsed[key]}")
+                        print()
+                internal_outputs = {key: parsed[key] for key in target_keys if key == 'reflection' and key in parsed}
+                agent.internal_states.append(internal_outputs)
+
+                if "message" in parsed:
+                    self.update_gamestate(agent.name, parsed["message"])
+
+                self._update_log(agent_data, current_round)
+
+                round_data.append(agent_data)
 
         if current_round == total_rounds:
             return self._process_voting_results(round_data)
@@ -280,7 +352,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
 
     intro = {
         "name": "introduction",
-        "instruction": "Since the meeting has just started, briefly introduce your country's position and any initial thoughts on the proposed UN policy. Be strategic in presenting your country's perspective.",
+        "instruction": "Since the meeting has just started, please introduce your country's position and any initial thoughts on the proposed UN policy. Be strategic in presenting your country's perspective.",
         "description": "your introduction",
     }
 
