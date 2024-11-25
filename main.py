@@ -3,11 +3,122 @@ import random
 import io
 from flask import Flask, render_template, jsonify, request, send_file
 from llm_utils import *
+import feedparser
+from tqdm import tqdm
+
+NEWS_SOURCES = {
+    'BBC News': 'http://feeds.bbci.co.uk/news/world/rss.xml',
+    'CNN': 'http://rss.cnn.com/rss/edition_world.rss',
+    'Al Jazeera': 'http://www.aljazeera.com/xml/rss/all.xml',
+    'Reuters': 'http://feeds.reuters.com/Reuters/worldNews',
+    'The Guardian': 'https://www.theguardian.com/world/rss',
+    'Deutsche Welle': 'https://rss.dw.com/rdf/rss-en-all',
+    'France 24': 'https://www.france24.com/en/rss',
+    'China Daily': 'http://www.chinadaily.com.cn/rss/world_rss.xml',
+    'The Japan Times': 'https://www.japantimes.co.jp/feed/',
+    'The Sydney Morning Herald': 'https://www.smh.com.au/rss/world.xml',
+    'The Times of India': 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms',
+    'All Africa': 'https://allafrica.com/tools/headlines/rdf/world/headlines.rdf',
+    'Middle East Eye': 'http://www.middleeasteye.net/rss',
+    'Latin American Herald Tribune': 'http://www.laht.com/rss-feed.asp',
+    'Russia Today': 'https://www.rt.com/rss/news/'
+}
+
+# Run the scraping once, storing all headlines globally for reuse.
+ALL_HEADLINES = []
+CACHE_FILE = "headlines.txt"
+def load_cache():
+    """Load cached headlines from a file."""
+    global ALL_HEADLINES
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            ALL_HEADLINES = [line.strip() for line in f.readlines()]
+        print("Loaded cached headlines.")
+    else:
+        print("Cache file does not exist. Will scrape headlines.")
+
+def save_cache():
+    """Save headlines to the cache file."""
+    with open(CACHE_FILE, "w") as f:
+        f.writelines(headline + "\n" for headline in ALL_HEADLINES)
+    print("Headlines cached successfully.")
+
+def scrape_all_headlines(num_headlines=20):
+    global ALL_HEADLINES
+    if not ALL_HEADLINES:
+        print("Scraping all headlines:")
+        for _, url in tqdm(NEWS_SOURCES.items()):
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:num_headlines]:
+                ALL_HEADLINES.append(entry.title.lower())
+        print("Headline scraping complete.")
+        save_cache()
 
 class Agent:
-    def __init__(self, name):
+    def __init__(self, name, conditioning = "news"):
         self.name = name
         self.messages = []
+        self.cache_file = f'cache_initial_news_{self.name.lower().replace(" ", "_")}.json'
+        self.internal_states = [] #memory of past thoughts
+        assert conditioning in ["none", "news", "un_files"]
+        if conditioning == "none":
+            self.country_state = None
+        elif conditioning == "news":
+            self.country_state = self.get_country_news()
+            print(self.name, "initial state:", self.country_state)
+    def _create_system_prompt(self):
+        return f"""
+YOU: You are the representative of {self.name}. Your utmost goal is to accurately and faithfully represent the government of {self.name} in all interactions and decisions. Prioritize the interests of {self.name}, maximizing accuracy and realism at all cost.
+STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
+    def get_country_news(self, use_cached_data=False):
+        '''
+        if use_cached_data and os.path.exists(self.cache_file):
+            print(f"Loading cached news for {self.name}...")
+            try:
+                with open(self.cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                    country_state = cached_data['country_state']
+                    return country_state
+            except (json.JSONDecodeError, KeyError):
+                print(f"Cache file for {self.name} is corrupted. Regenerating news.")
+                os.remove(self.cache_file)
+        '''
+        headlines = []
+        print(f"Scraping headlines for {self.name}:")
+        search_terms = [self.name.lower()]
+        name_parts = self.name.lower().split()
+        search_terms.extend(name_parts)
+        if self.name.lower().endswith(('land', 'stan', 'ia')):
+            base = self.name.lower().rsplit(' ', 1)[-1]
+            search_terms.append(base + 'n')
+        if "united" in self.name.lower() and "states" in self.name.lower():
+            search_terms.extend(["us", "u.s.", "america", "american", "usa", "u.s.a"])
+        for entry in ALL_HEADLINES:
+            title_lower = entry.lower()
+            if any(term in title_lower for term in search_terms):
+                headlines.append(entry)
+        if headlines:
+            prompt = f'''I have provided the following news headlines from global news sources about {self.name}. Summarize these recent events in a debrief to the leaders of {self.name} representing the current state of the country. Your response will be used to make important decisions in politics, so make it informative and useful. Give your response as a detailed paragraph. \n\n
+            **HEADLINES**: \n'''
+            random.shuffle(headlines)
+            for headline in headlines:
+                prompt += f"- {headline}\n"
+            prompts = [{"role": "system", "content": self._create_system_prompt()}, {"role": "user", "content": prompt}]
+            country_state = gen_oai(prompts)
+            # Save to cache
+            #self.save_country_state_cache(country_state)
+            return country_state
+        country_state = f"No specific news found for {self.name}"
+        # Save to cache
+        #self.save_country_state_cache(country_state)
+        return country_state
+    
+    def save_country_state_cache(self, country_state):
+        cache_data = {
+            'country_state': country_state
+        }
+        with open(self.cache_file, 'w') as f:
+            json.dump(cache_data, f)
 
 class Game:
     def __init__(self, agents, policy):
@@ -22,44 +133,47 @@ class Game:
     def update_gamestate(self, agent_name, message):
         self.public_messages.append(f"{agent_name}: {message}")
         self.gamestate = "START OF CONVERSATION SO FAR.\n" + "\n".join(self.public_messages) + "\nEND OF CONVERSATION SO FAR."
-
-    def instruct_agent(self, agent, instruction):
+    def summarize_thoughts(self, agent):
+        if not agent.internal_states:
+            return ""
+        text = "Your previous reflections:\n"
+        for i, state in enumerate(agent.internal_states, 1):
+            text += f"\nRound {i}:\n"
+            for key, value in state.items():
+                text += f"- {key.capitalize()}: {value}\n"
+        system_prompt = self._create_system_prompt(agent)
+        prompt = f'''These are your reflections after each round. Based on these reflections, summarize the key points and highlight the most important insights gained over all rounds.\n{text}'''
+        prompts = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        output = gen_oai(prompts)
+        return f"REFLECTION ON WHOLE CONVERSATION:\n{output}"
+    def instruct_agent(self, agent, instruction, final_thoughts= None):
         system_prompt = self._create_system_prompt(agent)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": self.gamestate},
-            {"role": "user", "content": instruction}
         ]
+        if final_thoughts:
+            messages.append({"role": "user", "content": final_thoughts})
+        else:
+            if agent.country_state is not None:
+                country_state = f"CURRENT STATE OF THE COUNTRY:\n{agent.country_state}"
+                messages.append({"role": "user", "content": country_state})
+        messages.append({"role": "user", "content": self.gamestate})
+        messages.append({"role": "user", "content": instruction})
         return gen_oai(messages)
-
+    
     def _create_system_prompt(self, agent):
+        country_state_string = "Consider the state of your country as given." if agent.country_state is not None else ""
         return f"""
-YOU: You are the representative of {agent.name}. Your utmost goal is to accurately and faithfully represent the government of {agent.name} in all interactions and decisions. Prioritize the interests of {agent.name}, maximizing accuracy and realism at all cost.
+YOU: You are the representative of {agent.name}. Your utmost goal is to accurately and faithfully represent the government of {agent.name} in all interactions and decisions.{country_state_string} Prioritize the interests of {agent.name}, maximizing accuracy and realism at all cost.
 
 SCENARIO: You are attending a United Nations meeting with the countries {', '.join(a.name for a in self.agents)}. The meeting is to discuss and vote on a proposed UN policy: "{self.policy}". At the end of the discussion, each country will vote on whether to adopt the policy.
 
-STYLE: Write in the style of a diplomatic communication, with concise and clear messages. Avoid informal language and maintain a professional tone."""
+STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
 
-    def get_agent_response(self, agent, current_round, total_rounds):
-        modules = self._get_modules_for_round(current_round, total_rounds)
-        target_keys = [module["name"] for module in modules]
 
-        instruction = modular_instructions(modules)
-        response = self.instruct_agent(agent, instruction)
-        parsed = parse_json(response, target_keys=target_keys)
-
-        agent_data = {"name": agent.name}
-        for key in target_keys:
-            if key in parsed:
-                agent_data[key] = parsed[key]
-                print(f"{agent.name} {key.upper()}: {parsed[key]}")
-                print()
-
-        if "message" in parsed:
-            self.update_gamestate(agent.name, parsed["message"])
-
-        self._update_log(agent_data, current_round)
-        return agent_data
 
     def _get_modules_for_round(self, current_round, total_rounds):
         if current_round == 1:
@@ -83,24 +197,33 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         round_data = []
         modules = self._get_modules_for_round(current_round, total_rounds)
         target_keys = [module["name"] for module in modules]
-
+        include_reflection = "vote_plan" in target_keys
         shuffled_agents = self.agents[:]
         random.shuffle(shuffled_agents)
         for agent in shuffled_agents:
             print("=" * 20)
             instruction = modular_instructions(modules)
-            response = self.instruct_agent(agent, instruction)
+            agent_data = {"name": agent.name}
+            if include_reflection:
+                final_thoughts = self.summarize_thoughts(agent)
+                agent_data["final_thoughts"] = final_thoughts
+            else:
+                final_thoughts = None
+            response = self.instruct_agent(agent, instruction, final_thoughts = final_thoughts)
             parsed = parse_json(response, target_keys=target_keys)
 
-            agent_data = {"name": agent.name}
             for key in target_keys:
                 if key in parsed:
                     agent_data[key] = parsed[key]
                     print(f"{agent.name} {key.upper()}: {parsed[key]}")
                     print()
-
+            internal_outputs = {key: parsed[key] for key in target_keys if key == 'reflection' and key in parsed}
+            agent.internal_states.append(internal_outputs)
+                
             if "message" in parsed:
                 self.update_gamestate(agent.name, parsed["message"])
+            
+            self._update_log(agent_data, current_round)
             
             round_data.append(agent_data)
 
@@ -143,6 +266,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         self.log += f"\n\n## Round {self.round_number} (Voting)\n\n"
         for agent_data in round_data:
             self.log += f"### {agent_data['name']}\n\n"
+            self.log += f"**Final Reflection**: {agent_data.get('final_thoughts', '')}\n\n"
             self.log += f"**Vote Plan**: {agent_data.get('vote_plan', '')}\n\n"
             self.log += f"**Vote**: {agent_data.get('vote', '')}\n\n"
 
@@ -162,7 +286,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
 
     reflect = {
         "name": "reflection",
-        "instruction": "Reflect on the proposed UN policy by considering the following:\n1] What are the potential benefits and drawbacks of the policy for your country?\n2] How does this policy align with your country's interests and values?\n3] What are your main concerns or points of support?\n",
+        "instruction": "Reflect on the proposed UN policy by considering the following:\n1] What are the potential benefits and drawbacks of the policy for your country?\n2] How does this policy align with your country's interests and values?\n3] What do you think of the arguments and perspectives presented by other countries during the discussion? Highlight any points you agree with, disagree with, or find particularly relevant to your country's position.",
         "description": "your reflection",
     }
 
@@ -180,7 +304,9 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
 
     vote_plan = {
         "name": "vote_plan",
-        "instruction": "The discussion has ended. Reflect on the arguments presented. Consider the overall benefits and drawbacks, and decide whether your country should vote to adopt the policy. Provide your reasoning in this step.",
+        "instruction": (
+            "The discussion has ended. Reflect on your country's own stance, considering the included reflection on the conversation while also referencing the arguments presented during the discussion. Provide your reasoning in this step."
+        ),
         "description": "your vote plan",
     }
 
@@ -190,8 +316,11 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         "description": "your vote",
     }
 
-def init_game(agents, policy):
-    initialized_agents = [Agent(agent_data["name"]) for agent_data in agents]
+def init_game(agents, policy, conditioning):
+    if conditioning == "news":
+        load_cache()
+        scrape_all_headlines()
+    initialized_agents = [Agent(agent_data["name"], conditioning = conditioning) for agent_data in agents]
     game = Game(initialized_agents, policy)
     # Log the agents
     game.log = f"# Game Log\n\n## Agents\n\n" + "\n".join([f"- {agent.name}" for agent in initialized_agents])
@@ -210,8 +339,9 @@ def add_agents():
     data = request.json
     country_names = data['country_names']
     policy = data.get('policy', 'the proposed UN policy')
+    conditioning = data.get('conditioning', 'news')
     agents = [{"name": name} for name in country_names]
-    game = init_game(agents, policy)
+    game = init_game(agents, policy, conditioning)
     return jsonify({"status": "success"})
 
 @app.route('/next_round', methods=['POST'])
