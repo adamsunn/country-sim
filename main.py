@@ -6,6 +6,7 @@ from flask import Flask, render_template, jsonify, request, send_file
 from llm_utils import *
 import feedparser
 from tqdm import tqdm
+import re
 
 NEWS_SOURCES = {
     'BBC News': 'http://feeds.bbci.co.uk/news/world/rss.xml',
@@ -100,7 +101,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
 
     def decide_to_speak(self, gamestate):
         system_prompt = self._create_system_prompt()
-        instruction = "Based on the current discussion, decide whether you want to request to speak in the next round. Respond with ONLY 'Yes' if you wish to speak, or 'No' if you do not wish to speak."
+        instruction = "Based on the current discussion, decide whether you want to provide additional insights. Do not feel obligated to speak if you do not feel that your country will have a strong desire to contribute to the conversation. Respond with ONLY 'Yes' if you wish to speak, or 'No' if you do not wish to speak."
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": gamestate},
@@ -114,23 +115,18 @@ class Chairperson:
         self.speakers_list = []
         self.agents = agents  # list of Agent objects
         self.policy = policy
+
     def _create_system_prompt(self):
         return f"""You are the Chairperson of the UN meeting which is currently discussing the following policy: {self.policy}. The countries in attendance are {', '.join(a.name for a in self.agents)}. Your role is to manage the flow of the meeting fairly and objectively, according to UN procedures."""
-    def manage_speakers_list(self, gamestate, requests, current_round, total_rounds):
-        prompt = f"""Create a speakers list based on the countries that have requested to speak, following UN rules. The following countries have requested to speak: {', '.join(requests)}. Based on UN procedures, determine the order in which they should speak. Return ONLY an ordered list of countries in a JSON object with key 'speakers_order'."""
-        messages = [
-            {"role": "system", "content": self._create_system_prompt()},
-            {"role": "user", "content": gamestate},
-            {"role": "user", "content": prompt},
-        ]
 
+    def manage_speakers_list(self, gamestate, requests, current_round, total_rounds):
         if not requests:
             # Handle the case where no agents have requested to speak
             no_requests_prompt = """No delegates have requested to speak. As the Chairperson, make an announcement encouraging delegates to participate in the discussion. Provide your announcement as a JSON object with a key 'announcement'."""
             messages = [
-            {"role": "system", "content": self._create_system_prompt()},
-            {"role": "user", "content": gamestate},
-            {"role": "user", "content": no_requests_prompt},
+                {"role": "system", "content": self._create_system_prompt()},
+                {"role": "user", "content": gamestate},
+                {"role": "user", "content": no_requests_prompt},
             ]
             response = gen_oai(messages)
             try:
@@ -142,14 +138,33 @@ class Chairperson:
                 announcement = 'Chairperson: I encourage delegates to share their views on the matter at hand.'
                 return [], announcement
 
+        # Prompt to generate the speakers list
+        prompt = f"""Reorder the countries that have requested to speak in order of priority based on UN procedures. The following countries have requested to speak: {requests}. Return ONLY an ordered list of countries in a JSON object with key 'speakers_order'."""
+        messages = [
+            {"role": "system", "content": self._create_system_prompt()},
+            {"role": "user", "content": gamestate},
+            {"role": "user", "content": prompt},
+        ]
         response = gen_oai(messages)
+        match = re.search(r'\[.*?\]', response)
         try:
-            data = json.loads(response)
-            speakers_order = data.get('speakers_order', requests)
-            return speakers_order, []
+            speakers_order = json.loads(match.group())
+            if not isinstance(speakers_order, list):
+                # If speakers_order is not a list, fallback to the requests list
+                speakers_order = requests.copy()
+            else:
+                # Validate that all countries are from the requests and no country is missing
+                speakers_order = [country for country in speakers_order if country in requests]
+                missing_countries = [country for country in requests if country not in speakers_order]
+                speakers_order.extend(missing_countries)
+                # Remove duplicates while preserving order
+                seen = set()
+                speakers_order = [x for x in speakers_order if not (x in seen or seen.add(x))]
+            return speakers_order, None
         except json.JSONDecodeError:
             # If parsing fails, fall back to the requests list as is, and no announcements
-            return requests, None
+            return requests.copy(), None
+
     def open_discussion(self):
         prompt = f"The discussion has just begun. The countries in attendance of the meeting are {', '.join(a.name for a in self.agents)}. They are here to discuss the following policy: {self.policy}. Create an opening statement to begin the meeting."
         messages = [
@@ -306,17 +321,17 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         return round_data, None, None
 
     def _process_voting_results(self, round_data):
-        vote_results = {'Yes': 0, 'No': 0}
+        vote_results = {'Yes': 0, 'No': 0, 'Abstain': 0}
         vote_list = []
         for agent_data in round_data:
             vote = agent_data.get("vote")
-            if vote in ['Yes', 'No']:
+            if vote in ['Yes', 'No', 'Abstain']:
                 vote_results[vote] += 1
                 vote_list.append((agent_data["name"], vote))
             else:
-                # Handle invalid votes, treat as 'No'
-                vote_results['No'] += 1
-                vote_list.append((agent_data["name"], 'No'))
+                # Handle invalid votes, treat as 'Abstain'
+                vote_results['Abstain'] += 1
+                vote_list.append((agent_data["name"], 'Abstain'))
 
         if vote_results['Yes'] > vote_results['No']:
             outcome = "The policy is adopted."
@@ -345,6 +360,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
         self.log += "\n## Voting Results\n\n"
         self.log += f"Yes votes: {vote_results['Yes']}\n"
         self.log += f"No votes: {vote_results['No']}\n"
+        self.log += f"Abstain votes: {vote_results['Abstain']}\n"
         self.log += f"\n**Outcome**: {outcome}\n"
 
     def get_log(self):
@@ -384,7 +400,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
 
     vote = {
         "name": "vote",
-        "instruction": "The discussion has ended. Cast your vote on the proposed UN policy. Respond with ONLY 'Yes' if you support adopting the policy, or 'No' if you do not.",
+        "instruction": "The discussion has ended. Cast your vote on the proposed UN policy. Respond with ONLY 'Yes' if you support adopting the policy,'No' if you do not, and 'Abstain' if you decide to abstain from the vote.",
         "description": "your vote",
     }
 
@@ -428,7 +444,9 @@ def next_round():
         if outcome:
             # Game is finished
             vote_results = {'Yes': sum(1 for vote in vote_list if vote[1] == 'Yes'),
-                            'No': sum(1 for vote in vote_list if vote[1] == 'No')}
+                            'No': sum(1 for vote in vote_list if vote[1] == 'No'),
+                            'Abstain': sum(1 for vote in vote_list if vote[1] == 'Abstain'),
+                            }
             game.log_voting_round(round_data, vote_results, outcome)
             return jsonify({
                 "finished": True,
