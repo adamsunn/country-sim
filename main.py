@@ -232,7 +232,9 @@ SCENARIO: You are attending a United Nations meeting with the countries {', '.jo
 STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
 
     def _get_modules_for_round(self, current_round, total_rounds):
-        if current_round == 1:
+        if total_rounds == 1:
+            return [self.vote_plan, self.vote]
+        elif current_round == 1:
             return [self.intro, self.message]
         elif current_round == total_rounds:
             return [self.vote_plan, self.vote]
@@ -536,57 +538,65 @@ def main():
             else:
                 ground_truth_votes[country] = 'Abstain'  # Default to 'Abstain' for unknown values
 
-        accuracies = []
-        for run_idx in range(5):
-            # Initialize the game
-            agents = [{"name": name} for name in country_names]
-            # Set conditioning to 'none' to avoid news scraping
-            game = init_game(agents, policy_text, conditioning='none')
-            total_rounds = 5  # You can adjust the number of rounds as needed
-            current_round = 1
-            while True:
-                round_data, outcome, vote_list = game.run_round(current_round, total_rounds)
-                if outcome:
-                    # Game is finished
-                    vote_results = {'Yes': sum(1 for vote in vote_list if vote[1] == 'Yes'),
-                                    'No': sum(1 for vote in vote_list if vote[1] == 'No'),
-                                    'Abstain': sum(1 for vote in vote_list if vote[1] == 'Abstain'),
-                                    }
-                    game.log_voting_round(round_data, vote_results, outcome)
-                    break
-                current_round +=1
-            # Get the simulated votes
-            simulated_votes = {agent: vote for agent, vote in vote_list}
-            # Compare to ground truth
-            num_correct = 0
-            total_agents = len(agents)
-            for agent_name in country_names:
-                simulated_vote = simulated_votes.get(agent_name, 'Abstain')
-                ground_truth_vote = ground_truth_votes.get(agent_name, 'Abstain')
-                if simulated_vote == ground_truth_vote:
-                    num_correct +=1
-            accuracy = num_correct / total_agents
-            accuracies.append(accuracy)
-            # Save the log
-            log_content = game.get_log()
-            # Save log to a file
-            policy_dir = f'policy_{policy_idx+1}'
-            if not os.path.exists(policy_dir):
-                os.makedirs(policy_dir)
-            log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
-            with open(log_filename, 'w', encoding='utf-8') as f:
-                f.write(log_content)
-            # Also save the simulated votes
-            votes_filename = os.path.join(policy_dir, f'run_{run_idx+1}_votes.json')
-            with open(votes_filename, 'w', encoding='utf-8') as f:
-                json.dump(simulated_votes, f)
-        # Calculate average accuracy
-        with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
-            f.write(f'Accuracies over 5 runs:\n')
-            for i, acc in enumerate(accuracies):
-                f.write(f'Run {i+1}: {acc:.2f}\n')
-            avg_accuracy = sum(accuracies) / len(accuracies)
-            f.write(f'Average accuracy: {avg_accuracy:.2f}\n')
+        # Define baselines
+        baselines = [
+            {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
+            {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
+            {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 5},
+            {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
+        ]
+
+        for baseline in baselines:
+            accuracies = []
+            for run_idx in range(5):
+                # Initialize the game
+                agents = [{"name": name} for name in country_names]
+                conditioning = baseline['conditioning']
+                game = init_game(agents, policy_text, conditioning=conditioning)
+                total_rounds = baseline['total_rounds']
+                current_round = 1
+                while True:
+                    round_data, outcome, vote_list = game.run_round(current_round, total_rounds)
+                    if outcome:
+                        # Game is finished
+                        vote_results = {'Yes': sum(1 for vote in vote_list if vote[1] == 'Yes'),
+                                        'No': sum(1 for vote in vote_list if vote[1] == 'No'),
+                                        'Abstain': sum(1 for vote in vote_list if vote[1] == 'Abstain'),
+                                        }
+                        game.log_voting_round(round_data, vote_results, outcome)
+                        break
+                    current_round +=1
+                # Get the simulated votes
+                simulated_votes = {agent: vote for agent, vote in vote_list}
+                # Compare to ground truth
+                num_correct = 0
+                total_agents = len(agents)
+                for agent_name in country_names:
+                    simulated_vote = simulated_votes.get(agent_name, 'Abstain')
+                    ground_truth_vote = ground_truth_votes.get(agent_name, 'Abstain')
+                    if simulated_vote == ground_truth_vote:
+                        num_correct +=1
+                accuracy = num_correct / total_agents
+                accuracies.append(accuracy)
+                # Save the log
+                baseline_name = baseline['name'].replace(' ', '_').lower()
+                policy_dir = f'policy_{policy_idx+1}_{baseline_name}'
+                if not os.path.exists(policy_dir):
+                    os.makedirs(policy_dir)
+                log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
+                with open(log_filename, 'w', encoding='utf-8') as f:
+                    f.write(log_content)
+                # Also save the simulated votes
+                votes_filename = os.path.join(policy_dir, f'run_{run_idx+1}_votes.json')
+                with open(votes_filename, 'w', encoding='utf-8') as f:
+                    json.dump(simulated_votes, f)
+            # Calculate average accuracy
+            with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
+                f.write(f'Accuracies over 5 runs for baseline {baseline["name"]}:\n')
+                for i, acc in enumerate(accuracies):
+                    f.write(f'Run {i+1}: {acc:.2f}\n')
+                avg_accuracy = sum(accuracies) / len(accuracies)
+                f.write(f'Average accuracy: {avg_accuracy:.2f}\n')
 
 if __name__ == "__main__":
     #app.run(debug=True)
