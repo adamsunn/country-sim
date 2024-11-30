@@ -492,13 +492,12 @@ def load_data(file_path):
     
     # Initialize the dictionary for the result
     policies_dict = {}
-    non_country_columns = ['date', 'descr', 'short', 'Unnamed: 3']
+    non_country_columns = ['date', 'descr', 'number']
     # Identify country columns by excluding non-country columns
     country_columns = [col for col in df.columns if col not in non_country_columns]
     for index, row in df.iterrows():
         # Get policy description
         policy_descr = row['descr']
-        policy_short = row['short']
         # Filter out columns where votes are not defined (NaN)
         votes = row[country_columns]
         # Drop NaN values and convert to dictionary
@@ -507,14 +506,13 @@ def load_data(file_path):
         # Add to the result dictionary
         policies_dict[len(policies_dict)] = {
             "policy": policy_descr,
-            "short": policy_short,
             "votes": vote_dict
         }
     
     return policies_dict
 
 def main():
-    data = load_data("/Users/adamsun/Documents/country-sim/finaldatasetactual.csv")
+    data = load_data("/Users/adamsun/Documents/country-sim/security_votes.csv")
     # For each policy_entry in vote_dict
     for policy_idx, policy_entry in data.items():
         policy_text = policy_entry['short']
