@@ -175,7 +175,7 @@ class Chairperson:
         return response
 
 class Game:
-    def __init__(self, agents, policy):
+    def __init__(self, agents, policy, max_per_round = 5):
         self.agents = agents
         self.policy = policy
         self.public_messages = []
@@ -184,6 +184,7 @@ class Game:
         self.gamestate = "Nothing has been said yet. Start the conversation. You don't know anything about the other countries yet, and vice versa.\n"
         self.log = ""
         self.chairperson = Chairperson(self.agents, self.policy)
+        self.max_per_round = max_per_round
 
     def update_gamestate(self, agent_name, message):
         self.public_messages.append(f"{agent_name}: {message}")
@@ -286,6 +287,8 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
             self._update_log(chairperson_data, current_round)
         else:
             # Proceed to have agents speak in order
+            if len(speakers_order) > self.max_per_round and not include_reflection: #Cap the number of speakers, only if it isnt voting
+                speakers_order = speakers_order[:self.max_per_round]
             for agent_name in speakers_order:
                 agent = next(a for a in self.agents if a.name == agent_name)
                 print("=" * 20)
@@ -480,5 +483,111 @@ def download_log():
     else:
         return jsonify({"error": "No game log available"}), 400
 
+def load_data(file_path):
+    # Load the CSV file into a DataFrame
+    df = pd.read_csv(file_path)
+    
+    
+    # Initialize the dictionary for the result
+    policies_dict = {}
+    non_country_columns = ['date', 'descr', 'short', 'Unnamed: 3']
+    # Identify country columns by excluding non-country columns
+    country_columns = [col for col in df.columns if col not in non_country_columns]
+    for index, row in df.iterrows():
+        # Get policy description
+        policy_descr = row['descr']
+        policy_short = row['short']
+        # Filter out columns where votes are not defined (NaN)
+        votes = row[country_columns]
+        # Drop NaN values and convert to dictionary
+        vote_dict = votes.dropna().to_dict()
+        
+        # Add to the result dictionary
+        policies_dict[len(policies_dict)] = {
+            "policy": policy_descr,
+            "short": policy_short,
+            "votes": vote_dict
+        }
+    
+    return policies_dict
+
+def main():
+    data = load_data("/Users/adamsun/Documents/country-sim/finaldatasetactual.csv")
+    # For each policy_entry in vote_dict
+    for policy_idx, policy_entry in data.items():
+        policy_text = policy_entry['short']
+        votes_dict = policy_entry['votes']
+
+        # Remove 'Unnamed: 0' if present
+        votes_dict.pop('Unnamed: 0', None)
+
+        # Get the list of countries
+        country_names = list(votes_dict.keys())
+
+        # Map ground truth votes to 'Yes', 'No', 'Abstain'
+        ground_truth_votes = {}
+        for country, vote in votes_dict.items():
+            if vote == 2:
+                ground_truth_votes[country] = 'Yes'
+            elif vote == 1:
+                ground_truth_votes[country] = 'Abstain'
+            elif vote == 0:
+                ground_truth_votes[country] = 'No'
+            else:
+                ground_truth_votes[country] = 'Abstain'  # Default to 'Abstain' for unknown values
+
+        accuracies = []
+        for run_idx in range(5):
+            # Initialize the game
+            agents = [{"name": name} for name in country_names]
+            # Set conditioning to 'none' to avoid news scraping
+            game = init_game(agents, policy_text, conditioning='none')
+            total_rounds = 5  # You can adjust the number of rounds as needed
+            current_round = 1
+            while True:
+                round_data, outcome, vote_list = game.run_round(current_round, total_rounds)
+                if outcome:
+                    # Game is finished
+                    vote_results = {'Yes': sum(1 for vote in vote_list if vote[1] == 'Yes'),
+                                    'No': sum(1 for vote in vote_list if vote[1] == 'No'),
+                                    'Abstain': sum(1 for vote in vote_list if vote[1] == 'Abstain'),
+                                    }
+                    game.log_voting_round(round_data, vote_results, outcome)
+                    break
+                current_round +=1
+            # Get the simulated votes
+            simulated_votes = {agent: vote for agent, vote in vote_list}
+            # Compare to ground truth
+            num_correct = 0
+            total_agents = len(agents)
+            for agent_name in country_names:
+                simulated_vote = simulated_votes.get(agent_name, 'Abstain')
+                ground_truth_vote = ground_truth_votes.get(agent_name, 'Abstain')
+                if simulated_vote == ground_truth_vote:
+                    num_correct +=1
+            accuracy = num_correct / total_agents
+            accuracies.append(accuracy)
+            # Save the log
+            log_content = game.get_log()
+            # Save log to a file
+            policy_dir = f'policy_{policy_idx+1}'
+            if not os.path.exists(policy_dir):
+                os.makedirs(policy_dir)
+            log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
+            with open(log_filename, 'w', encoding='utf-8') as f:
+                f.write(log_content)
+            # Also save the simulated votes
+            votes_filename = os.path.join(policy_dir, f'run_{run_idx+1}_votes.json')
+            with open(votes_filename, 'w', encoding='utf-8') as f:
+                json.dump(simulated_votes, f)
+        # Calculate average accuracy
+        with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
+            f.write(f'Accuracies over 5 runs:\n')
+            for i, acc in enumerate(accuracies):
+                f.write(f'Run {i+1}: {acc:.2f}\n')
+            avg_accuracy = sum(accuracies) / len(accuracies)
+            f.write(f'Average accuracy: {avg_accuracy:.2f}\n')
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    #app.run(debug=True)
+    main()
