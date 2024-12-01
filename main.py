@@ -518,6 +518,7 @@ def main():
     # For each policy_entry in vote_dict
     for policy_idx, policy_entry in data.items():
         policy_text = policy_entry['policy']
+        print(f"RUNNING POLICY: \n \n {policy_text}")
         votes_dict = policy_entry['votes']
 
         # Remove 'Unnamed: 0' if present
@@ -547,6 +548,7 @@ def main():
         ]
 
         for baseline in baselines:
+            print(f"RUNNING BASELINE: \n \n {baseline}")
             accuracies = []
             for run_idx in range(5):
                 # Initialize the game
@@ -595,9 +597,9 @@ def main():
             with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
                 f.write(f'Accuracies over 5 runs for baseline {baseline["name"]}:\n')
                 for i, acc in enumerate(accuracies):
-                    f.write(f'Run {i+1}: {acc:.2f}\n')
+                    f.write(f'Run {i+1}: {acc:.5f}\n')
                 avg_accuracy = sum(accuracies) / len(accuracies)
-                f.write(f'Average accuracy: {avg_accuracy:.2f}\n')
+                f.write(f'Average accuracy: {avg_accuracy:.5f}\n')
 
 if __name__ == "__main__":
     #app.run(debug=True)
