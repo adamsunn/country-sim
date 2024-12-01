@@ -117,7 +117,7 @@ class Chairperson:
         self.policy = policy
 
     def _create_system_prompt(self):
-        return f"""You are the Chairperson of the UN meeting which is currently discussing the following policy: {self.policy}. The countries in attendance are {', '.join(a.name for a in self.agents)}. Your role is to manage the flow of the meeting fairly and objectively, according to UN procedures."""
+        return f"""You are the Chairperson of the UN Security Council. The countries in attendance are {', '.join(a.name for a in self.agents)}. Your role is to manage the flow of the meeting fairly and objectively, according to UN procedures. \n \n **PROPOSED RESOLUTION**: \n {self.policy}"""
 
     def manage_speakers_list(self, gamestate, requests, current_round, total_rounds):
         if not requests:
@@ -161,12 +161,12 @@ class Chairperson:
                 seen = set()
                 speakers_order = [x for x in speakers_order if not (x in seen or seen.add(x))]
             return speakers_order, None
-        except json.JSONDecodeError:
+        except:
             # If parsing fails, fall back to the requests list as is, and no announcements
             return requests.copy(), None
 
     def open_discussion(self):
-        prompt = f"The discussion has just begun. The countries in attendance of the meeting are {', '.join(a.name for a in self.agents)}. They are here to discuss the following policy: {self.policy}. Create an opening statement to begin the meeting."
+        prompt = f"The discussion has just begun. The countries in attendance of the meeting are {', '.join(a.name for a in self.agents)}. Create an opening statement to begin the meeting."
         messages = [
             {"role": "system", "content": self._create_system_prompt()},
             {"role": "user", "content": prompt},
@@ -227,7 +227,9 @@ class Game:
         return f"""
 YOU: You are the representative of {agent.name}. Your utmost goal is to accurately and faithfully represent the government of {agent.name} in all interactions and decisions.{country_state_string} Prioritize the interests of {agent.name}, maximizing accuracy and realism at all cost.
 
-SCENARIO: You are attending a United Nations meeting with the countries {', '.join(a.name for a in self.agents)}. The meeting is to discuss and vote on a proposed UN policy: "{self.policy}". At the end of the discussion, each country will vote on whether to adopt the policy.
+SCENARIO: You are attending a United Nations Security Council meeting with the countries {', '.join(a.name for a in self.agents)}. The meeting is to discuss and vote on the proposed resolution. At the end of the discussion, each country will vote on whether to adopt the policy.
+
+PROPOSED RESOLUTION: {self.policy}
 
 STYLE: Write in the style of a diplomatic communication, with concise and clear messages."""
 
@@ -398,14 +400,14 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
     vote_plan = {
         "name": "vote_plan",
         "instruction": (
-            "The discussion has ended. Reflect on your country's own stance, considering the included reflection on the conversation while also referencing the arguments presented during the discussion. Provide your reasoning in this step."
+            "The discussion has ended. Reflect carefully on your country's stance, weighing the interests of your nation, the arguments presented during the discussion, and the potential consequences of each voting option. Provide your reasoning in this step."
         ),
         "description": "your vote plan",
     }
 
     vote = {
         "name": "vote",
-        "instruction": "The discussion has ended. Cast your vote on the proposed UN policy. Respond with ONLY 'Yes' if you support adopting the policy,'No' if you do not, and 'Abstain' if you decide to abstain from the vote.",
+        "instruction": "The discussion has ended. Cast your vote on the proposed UN policy. Respond with ONLY 'Yes' if you support adopting the resolution, 'No' if you are opposed, or 'Abstain' if your country seeks to maintain neutrality.",
         "description": "your vote",
     }
 
@@ -515,7 +517,7 @@ def main():
     data = load_data("/Users/adamsun/Documents/country-sim/security_votes.csv")
     # For each policy_entry in vote_dict
     for policy_idx, policy_entry in data.items():
-        policy_text = policy_entry['short']
+        policy_text = policy_entry['policy']
         votes_dict = policy_entry['votes']
 
         # Remove 'Unnamed: 0' if present
@@ -539,9 +541,9 @@ def main():
         # Define baselines
         baselines = [
             {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
-            {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
-            {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 5},
-            {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
+            #{'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
+            {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 4},
+            #{'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
         ]
 
         for baseline in baselines:
@@ -582,6 +584,7 @@ def main():
                 if not os.path.exists(policy_dir):
                     os.makedirs(policy_dir)
                 log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
+                log_content = game.get_log()
                 with open(log_filename, 'w', encoding='utf-8') as f:
                     f.write(log_content)
                 # Also save the simulated votes
