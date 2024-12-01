@@ -7,6 +7,8 @@ from llm_utils import *
 import feedparser
 from tqdm import tqdm
 import re
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 NEWS_SOURCES = {
     'BBC News': 'http://feeds.bbci.co.uk/news/world/rss.xml',
@@ -542,14 +544,26 @@ def main():
         # Define baselines
         baselines = [
             {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
-            #{'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
+            # {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
             {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 4},
-            #{'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
+            # {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
         ]
 
         for baseline in baselines:
             print(f"RUNNING BASELINE: \n \n {baseline}")
             accuracies = []
+
+            # Initialize confusion matrix for this baseline
+            confusion_matrix = np.zeros((3, 3), dtype=int)
+            labels = ['Yes', 'No', 'Abstain']
+            label_to_idx = {'Yes': 0, 'No': 1, 'Abstain': 2}
+
+            # Define policy_dir outside the run loop
+            baseline_name = baseline['name'].replace(' ', '_').lower()
+            policy_dir = f'policy_{policy_idx+1}_{baseline_name}'
+            if not os.path.exists(policy_dir):
+                os.makedirs(policy_dir)
+
             for run_idx in range(5):
                 # Initialize the game
                 agents = [{"name": name} for name in country_names]
@@ -567,7 +581,7 @@ def main():
                                         }
                         game.log_voting_round(round_data, vote_results, outcome)
                         break
-                    current_round +=1
+                    current_round += 1
                 # Get the simulated votes
                 simulated_votes = {agent: vote for agent, vote in vote_list}
                 # Compare to ground truth
@@ -577,14 +591,16 @@ def main():
                     simulated_vote = simulated_votes.get(agent_name, 'Abstain')
                     ground_truth_vote = ground_truth_votes.get(agent_name, 'Abstain')
                     if simulated_vote == ground_truth_vote:
-                        num_correct +=1
+                        num_correct += 1
+
+                    # Update confusion matrix
+                    sv_idx = label_to_idx.get(simulated_vote, 2)  # Default to 'Abstain' index
+                    gt_idx = label_to_idx.get(ground_truth_vote, 2)
+                    confusion_matrix[gt_idx, sv_idx] += 1
+
                 accuracy = num_correct / total_agents
                 accuracies.append(accuracy)
                 # Save the log
-                baseline_name = baseline['name'].replace(' ', '_').lower()
-                policy_dir = f'policy_{policy_idx+1}_{baseline_name}'
-                if not os.path.exists(policy_dir):
-                    os.makedirs(policy_dir)
                 log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
                 log_content = game.get_log()
                 with open(log_filename, 'w', encoding='utf-8') as f:
@@ -593,6 +609,7 @@ def main():
                 votes_filename = os.path.join(policy_dir, f'run_{run_idx+1}_votes.json')
                 with open(votes_filename, 'w', encoding='utf-8') as f:
                     json.dump(simulated_votes, f)
+
             # Calculate average accuracy
             with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
                 f.write(f'Accuracies over 5 runs for baseline {baseline["name"]}:\n')
@@ -600,6 +617,18 @@ def main():
                     f.write(f'Run {i+1}: {acc:.5f}\n')
                 avg_accuracy = sum(accuracies) / len(accuracies)
                 f.write(f'Average accuracy: {avg_accuracy:.5f}\n')
+
+            # Create and save the confusion matrix
+            df_cm = pd.DataFrame(confusion_matrix, index=labels, columns=labels)
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues')
+            plt.xlabel('Predicted Votes')
+            plt.ylabel('True Votes')
+            plt.title(f'Confusion Matrix for Baseline: {baseline["name"]}')
+            confusion_matrix_filename = os.path.join(policy_dir, 'confusion_matrix.png')
+            plt.savefig(confusion_matrix_filename)
+            plt.close()
+
 
 if __name__ == "__main__":
     #app.run(debug=True)
