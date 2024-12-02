@@ -339,8 +339,9 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
                 vote_list.append((agent_data["name"], vote))
             else:
                 # Handle invalid votes, treat as 'Abstain'
-                vote_results['Abstain'] += 1
-                vote_list.append((agent_data["name"], 'Abstain'))
+                if agent_data["name"] != "Abstain":
+                    vote_results['Abstain'] += 1
+                    vote_list.append((agent_data["name"], 'Abstain'))
 
         if vote_results['Yes'] > vote_results['No']:
             outcome = "The policy is adopted."
@@ -515,9 +516,39 @@ def load_data(file_path):
     
     return policies_dict
 
+def compute_similarity(gt_vote, sim_vote):
+    if gt_vote == sim_vote:
+        return 1.0
+    elif ((gt_vote == 'Yes' and sim_vote == 'Abstain') or (gt_vote == 'Abstain' and sim_vote == 'Yes') or
+          (gt_vote == 'No' and sim_vote == 'Abstain') or (gt_vote == 'Abstain' and sim_vote == 'No')):
+        return 0.5
+    else:  # gt_vote != sim_vote and not involving 'Abstain'
+        return 0.0
+
 def main():
-    data = load_data("/Users/adamsun/Documents/country-sim/security_votes.csv")
-    # For each policy_entry in vote_dict
+    data = load_data("security_votes.csv")
+    # Define baselines
+    baselines = [
+        {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
+        # {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
+        {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 4},
+        # {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
+    ]
+
+    # Initialize overall data structures
+    overall_data = {}
+    labels = ['Yes', 'No', 'Abstain']
+    label_to_idx = {'Yes': 0, 'No': 1, 'Abstain': 2}
+    for baseline in baselines:
+        baseline_name = baseline['name']
+        overall_data[baseline_name] = {
+            'confusion_matrix': np.zeros((3, 3), dtype=int),
+            'accuracies': [],
+            'adjusted_accuracies': [],
+            'vote_distributions': []  # This will collect votes across all policies and runs
+        }
+
+    # For each policy_entry in data
     for policy_idx, policy_entry in data.items():
         policy_text = policy_entry['policy']
         print(f"RUNNING POLICY: \n \n {policy_text}")
@@ -541,23 +572,8 @@ def main():
             else:
                 ground_truth_votes[country] = 'Abstain'  # Default to 'Abstain' for unknown values
 
-        # Define baselines
-        baselines = [
-            {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
-            # {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
-            {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 4},
-            # {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
-        ]
-
         for baseline in baselines:
             print(f"RUNNING BASELINE: \n \n {baseline}")
-            accuracies = []
-
-            # Initialize confusion matrix for this baseline
-            confusion_matrix = np.zeros((3, 3), dtype=int)
-            labels = ['Yes', 'No', 'Abstain']
-            label_to_idx = {'Yes': 0, 'No': 1, 'Abstain': 2}
-
             # Define policy_dir outside the run loop
             baseline_name = baseline['name'].replace(' ', '_').lower()
             policy_dir = f'policy_{policy_idx+1}_{baseline_name}'
@@ -584,12 +600,20 @@ def main():
                     current_round += 1
                 # Get the simulated votes
                 simulated_votes = {agent: vote for agent, vote in vote_list}
-                # Compare to ground truth
-                num_correct = 0
+
+                # Initialize confusion matrix for this run
+                confusion_matrix = np.zeros((3, 3), dtype=int)
+                total_similarity = 0
                 total_agents = len(agents)
+                num_correct = 0
+
                 for agent_name in country_names:
                     simulated_vote = simulated_votes.get(agent_name, 'Abstain')
                     ground_truth_vote = ground_truth_votes.get(agent_name, 'Abstain')
+
+                    similarity = compute_similarity(ground_truth_vote, simulated_vote)
+                    total_similarity += similarity
+
                     if simulated_vote == ground_truth_vote:
                         num_correct += 1
 
@@ -598,8 +622,19 @@ def main():
                     gt_idx = label_to_idx.get(ground_truth_vote, 2)
                     confusion_matrix[gt_idx, sv_idx] += 1
 
+                adjusted_accuracy = total_similarity / total_agents
+                overall_data[baseline['name']]['adjusted_accuracies'].append(adjusted_accuracy)
+
                 accuracy = num_correct / total_agents
-                accuracies.append(accuracy)
+                overall_data[baseline['name']]['accuracies'].append(accuracy)
+
+                # Collect votes for vote distribution
+                vote_distributions = [vote for agent, vote in vote_list]
+                overall_data[baseline['name']]['vote_distributions'].extend(vote_distributions)
+
+                # Accumulate confusion matrix into overall data
+                overall_data[baseline['name']]['confusion_matrix'] += confusion_matrix
+
                 # Save the log
                 log_filename = os.path.join(policy_dir, f'run_{run_idx+1}_log.txt')
                 log_content = game.get_log()
@@ -610,24 +645,74 @@ def main():
                 with open(votes_filename, 'w', encoding='utf-8') as f:
                     json.dump(simulated_votes, f)
 
-            # Calculate average accuracy
-            with open(os.path.join(policy_dir, 'accuracy.txt'), 'w', encoding='utf-8') as f:
-                f.write(f'Accuracies over 5 runs for baseline {baseline["name"]}:\n')
-                for i, acc in enumerate(accuracies):
+            # Write adjusted accuracies to a file
+            with open(os.path.join(policy_dir, 'adjusted_accuracy.txt'), 'w', encoding='utf-8') as f:
+                f.write(f'Adjusted Accuracies over 5 runs for baseline {baseline["name"]}:\n')
+                for i, acc in enumerate(overall_data[baseline['name']]['adjusted_accuracies']):
                     f.write(f'Run {i+1}: {acc:.5f}\n')
-                avg_accuracy = sum(accuracies) / len(accuracies)
-                f.write(f'Average accuracy: {avg_accuracy:.5f}\n')
+                avg_adjusted_accuracy = sum(overall_data[baseline['name']]['adjusted_accuracies']) / len(overall_data[baseline['name']]['adjusted_accuracies'])
+                f.write(f'Average adjusted accuracy: {avg_adjusted_accuracy:.5f}\n')
 
-            # Create and save the confusion matrix
+            # Create and save the confusion matrix for this policy and baseline
             df_cm = pd.DataFrame(confusion_matrix, index=labels, columns=labels)
             plt.figure(figsize=(8, 6))
             sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues')
             plt.xlabel('Predicted Votes')
             plt.ylabel('True Votes')
-            plt.title(f'Confusion Matrix for Baseline: {baseline["name"]}')
+            plt.title(f'Confusion Matrix for Policy {policy_idx+1}, Baseline: {baseline["name"]}')
             confusion_matrix_filename = os.path.join(policy_dir, 'confusion_matrix.png')
             plt.savefig(confusion_matrix_filename)
             plt.close()
+
+    # After looping over all policies
+    # Now, save overall accuracies and confusion matrices per baseline
+    for baseline in baselines:
+        baseline_name = baseline['name']
+        baseline_data = overall_data[baseline_name]
+
+        # Save overall accuracy
+        overall_accuracy_filename = f'overall_accuracy_{baseline_name.replace(" ", "_").lower()}.txt'
+        with open(overall_accuracy_filename, 'w', encoding='utf-8') as f:
+            f.write(f'Overall Accuracies across all policies for baseline {baseline_name}:\n')
+            for i, acc in enumerate(baseline_data['accuracies']):
+                f.write(f'Accuracy {i+1}: {acc:.5f}\n')
+            avg_accuracy = sum(baseline_data['accuracies']) / len(baseline_data['accuracies'])
+            f.write(f'Average accuracy: {avg_accuracy:.5f}\n')
+
+        # Save overall adjusted accuracy
+        overall_adjusted_accuracy_filename = f'overall_adjusted_accuracy_{baseline_name.replace(" ", "_").lower()}.txt'
+        with open(overall_adjusted_accuracy_filename, 'w', encoding='utf-8') as f:
+            f.write(f'Overall Adjusted Accuracies across all policies for baseline {baseline_name}:\n')
+            for i, acc in enumerate(baseline_data['adjusted_accuracies']):
+                f.write(f'Adjusted Accuracy {i+1}: {acc:.5f}\n')
+            avg_adjusted_accuracy = sum(baseline_data['adjusted_accuracies']) / len(baseline_data['adjusted_accuracies'])
+            f.write(f'Average adjusted accuracy: {avg_adjusted_accuracy:.5f}\n')
+
+        # Save overall confusion matrix
+        df_cm = pd.DataFrame(baseline_data['confusion_matrix'], index=labels, columns=labels)
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(df_cm, annot=True, fmt='d', cmap='Blues')
+        plt.xlabel('Predicted Votes')
+        plt.ylabel('True Votes')
+        plt.title(f'Overall Confusion Matrix for Baseline: {baseline_name}')
+        confusion_matrix_filename = f'overall_confusion_matrix_{baseline_name.replace(" ", "_").lower()}.png'
+        plt.savefig(confusion_matrix_filename)
+        plt.close()
+
+        # Graph the vote distributions across all policies and examples
+        vote_counts = {'Yes': 0, 'No': 0, 'Abstain': 0}
+        for vote in baseline_data['vote_distributions']:
+            vote_counts[vote] += 1
+
+        # Create a bar plot for the vote distribution
+        plt.figure(figsize=(6, 4))
+        plt.bar(vote_counts.keys(), vote_counts.values(), color=['green', 'red', 'gray'])
+        plt.xlabel('Vote')
+        plt.ylabel('Count')
+        plt.title(f'Vote Distribution across all policies for Baseline: {baseline_name}')
+        vote_distribution_filename = f'vote_distribution_{baseline_name.replace(" ", "_").lower()}.png'
+        plt.savefig(vote_distribution_filename)
+        plt.close()
 
 
 if __name__ == "__main__":
