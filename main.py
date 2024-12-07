@@ -10,6 +10,7 @@ import re
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+'''
 NEWS_SOURCES = {
     'BBC News': 'http://feeds.bbci.co.uk/news/world/rss.xml',
     'CNN': 'http://rss.cnn.com/rss/edition_world.rss',
@@ -57,7 +58,7 @@ def scrape_all_headlines(num_headlines=20):
                 ALL_HEADLINES.append(entry.title.lower())
         print("Headline scraping complete.")
         save_cache()
-
+'''
 class Agent:
     def __init__(self, name, conditioning = "news"):
         self.name = name
@@ -403,7 +404,7 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
     vote_plan = {
         "name": "vote_plan",
         "instruction": (
-            "The discussion has ended. Reflect carefully on your country's stance, weighing the interests of your nation, the arguments presented during the discussion, and the potential consequences of each voting option. Provide your reasoning in this step."
+            "The discussion has ended. Reflect carefully on your country's stance, weighing the interests of your nation and the arguments presented during the discussion. Provide your reasoning in this step."
         ),
         "description": "your vote plan",
     }
@@ -415,9 +416,11 @@ STYLE: Write in the style of a diplomatic communication, with concise and clear 
     }
 
 def init_game(agents, policy, conditioning):
+    '''
     if conditioning == "news":
         load_cache()
         scrape_all_headlines()
+    '''
     initialized_agents = [Agent(agent_data["name"], conditioning = conditioning) for agent_data in agents]
     game = Game(initialized_agents, policy)
     # Log the agents
@@ -437,7 +440,7 @@ def add_agents():
     data = request.json
     country_names = data['country_names']
     policy = data.get('policy', 'the proposed UN policy')
-    conditioning = data.get('conditioning', 'news')
+    conditioning = data.get('conditioning', 'none')
     agents = [{"name": name} for name in country_names]
     game = init_game(agents, policy, conditioning)
     return jsonify({"status": "success"})
@@ -524,15 +527,12 @@ def compute_similarity(gt_vote, sim_vote):
         return 0.5
     else:  # gt_vote != sim_vote and not involving 'Abstain'
         return 0.0
-
 def main():
     data = load_data("security_votes.csv")
     # Define baselines
     baselines = [
         {'name': 'No discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 1},
-        # {'name': 'No discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 1},
         {'name': 'Discussion, No conditioning', 'conditioning': 'none', 'total_rounds': 4},
-        # {'name': 'Discussion, News conditioning', 'conditioning': 'news', 'total_rounds': 5},
     ]
 
     # Initialize overall data structures
@@ -553,9 +553,6 @@ def main():
         policy_text = policy_entry['policy']
         print(f"RUNNING POLICY: \n \n {policy_text}")
         votes_dict = policy_entry['votes']
-
-        # Remove 'Unnamed: 0' if present
-        votes_dict.pop('Unnamed: 0', None)
 
         # Get the list of countries
         country_names = list(votes_dict.keys())
@@ -580,7 +577,7 @@ def main():
             if not os.path.exists(policy_dir):
                 os.makedirs(policy_dir)
 
-            for run_idx in range(5):
+            for run_idx in range(3):
                 # Initialize the game
                 agents = [{"name": name} for name in country_names]
                 conditioning = baseline['conditioning']
@@ -713,7 +710,6 @@ def main():
         vote_distribution_filename = f'vote_distribution_{baseline_name.replace(" ", "_").lower()}.png'
         plt.savefig(vote_distribution_filename)
         plt.close()
-
 
 if __name__ == "__main__":
     #app.run(debug=True)
